@@ -204,3 +204,206 @@ pub fn main() void {
     var machine = Machine.init(arena.allocator());
     interpret(&machine, words);
 }
+
+test "lex integers" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Basic integers
+    {
+        const words = lex(allocator, "0 42 -17 +99");
+        try std.testing.expectEqual(@as(usize, 4), words.len);
+        try std.testing.expectEqual(@as(i64, 0), words[0].int);
+        try std.testing.expectEqual(@as(i64, 42), words[1].int);
+        try std.testing.expectEqual(@as(i64, -17), words[2].int);
+        try std.testing.expectEqual(@as(i64, 99), words[3].int);
+    }
+
+    // Different bases
+    {
+        const words = lex(allocator, "0x1F 0xFF 0b1010 0o77");
+        try std.testing.expectEqual(@as(usize, 4), words.len);
+        try std.testing.expectEqual(@as(i64, 31), words[0].int);
+        try std.testing.expectEqual(@as(i64, 255), words[1].int);
+        try std.testing.expectEqual(@as(i64, 10), words[2].int);
+        try std.testing.expectEqual(@as(i64, 63), words[3].int);
+    }
+
+    // Large numbers
+    {
+        const words = lex(allocator, "9223372036854775807 -9223372036854775808");
+        try std.testing.expectEqual(@as(usize, 2), words.len);
+        try std.testing.expectEqual(@as(i64, std.math.maxInt(i64)), words[0].int);
+        try std.testing.expectEqual(@as(i64, std.math.minInt(i64)), words[1].int);
+    }
+}
+
+test "lex floats" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Basic floats
+    {
+        const words = lex(allocator, "3.14 -2.5 0.0 +1.23");
+        try std.testing.expectEqual(@as(usize, 4), words.len);
+        try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[0].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, -2.5), words[1].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, 0.0), words[2].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, 1.23), words[3].float, 0.001);
+    }
+
+    // Scientific notation
+    {
+        const words = lex(allocator, "1e10 1.5e-5 -3.14e+2");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectApproxEqAbs(@as(f64, 1e10), words[0].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, 1.5e-5), words[1].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, -3.14e+2), words[2].float, 0.001);
+    }
+
+    // Edge cases
+    {
+        const words = lex(allocator, ".5 0. 1.");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectApproxEqAbs(@as(f64, 0.5), words[0].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, 0.0), words[1].float, 0.001);
+        try std.testing.expectApproxEqAbs(@as(f64, 1.0), words[2].float, 0.001);
+    }
+}
+
+test "lex strings" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Basic strings
+    {
+        const words = lex(allocator, "\"hello\" \"world\" \"\"");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqualStrings("hello", words[0].string);
+        try std.testing.expectEqualStrings("world", words[1].string);
+        try std.testing.expectEqualStrings("", words[2].string);
+    }
+
+    // Escape sequences
+    {
+        const words = lex(allocator, "\"\\n\\t\\r\" \"\\\"quoted\\\"\" \"back\\\\slash\" \"null\\0char\"");
+        try std.testing.expectEqual(@as(usize, 4), words.len);
+        try std.testing.expectEqualStrings("\n\t\r", words[0].string);
+        try std.testing.expectEqualStrings("\"quoted\"", words[1].string);
+        try std.testing.expectEqualStrings("back\\slash", words[2].string);
+        try std.testing.expectEqualStrings("null\x00char", words[3].string);
+    }
+
+    // Strings with spaces
+    {
+        const words = lex(allocator, "\"hello world\" \"multiple   spaces\" \"tabs\\there\"");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqualStrings("hello world", words[0].string);
+        try std.testing.expectEqualStrings("multiple   spaces", words[1].string);
+        try std.testing.expectEqualStrings("tabs\there", words[2].string);
+    }
+
+    // Invalid escape sequences
+    {
+        const words = lex(allocator, "\"\\x\" \"\\q\" \"\\1\"");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqualStrings("x", words[0].string);
+        try std.testing.expectEqualStrings("q", words[1].string);
+        try std.testing.expectEqualStrings("1", words[2].string);
+    }
+}
+
+test "lex identifiers" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Basic identifiers and operators
+    {
+        const words = lex(allocator, "+ - * / dup drop swap over");
+        try std.testing.expectEqual(@as(usize, 8), words.len);
+        try std.testing.expectEqualStrings("+", words[0].identifier);
+        try std.testing.expectEqualStrings("-", words[1].identifier);
+        try std.testing.expectEqualStrings("*", words[2].identifier);
+        try std.testing.expectEqualStrings("/", words[3].identifier);
+        try std.testing.expectEqualStrings("dup", words[4].identifier);
+        try std.testing.expectEqualStrings("drop", words[5].identifier);
+        try std.testing.expectEqualStrings("swap", words[6].identifier);
+        try std.testing.expectEqualStrings("over", words[7].identifier);
+    }
+
+    // Complex identifiers
+    {
+        const words = lex(allocator, "foo123 _bar baz_ under_score CamelCase");
+        try std.testing.expectEqual(@as(usize, 5), words.len);
+        try std.testing.expectEqualStrings("foo123", words[0].identifier);
+        try std.testing.expectEqualStrings("_bar", words[1].identifier);
+        try std.testing.expectEqualStrings("baz_", words[2].identifier);
+        try std.testing.expectEqualStrings("under_score", words[3].identifier);
+        try std.testing.expectEqualStrings("CamelCase", words[4].identifier);
+    }
+
+    // Special characters
+    {
+        const words = lex(allocator, "! @ # $ % ^ & = < > ? :");
+        try std.testing.expectEqual(@as(usize, 12), words.len);
+        for (words, 0..) |word, i| {
+            _ = i;
+            try std.testing.expect(word == .identifier);
+        }
+    }
+}
+
+test "lex mixed input" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Mixed types
+    {
+        const words = lex(allocator, "42 3.14 \"hello\" + -17 \"world\" swap");
+        try std.testing.expectEqual(@as(usize, 7), words.len);
+        try std.testing.expectEqual(@as(i64, 42), words[0].int);
+        try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[1].float, 0.001);
+        try std.testing.expectEqualStrings("hello", words[2].string);
+        try std.testing.expectEqualStrings("+", words[3].identifier);
+        try std.testing.expectEqual(@as(i64, -17), words[4].int);
+        try std.testing.expectEqualStrings("world", words[5].string);
+        try std.testing.expectEqualStrings("swap", words[6].identifier);
+    }
+
+    // Different whitespace
+    {
+        const words = lex(allocator, "1\n2\t3  4\n\t  5");
+        try std.testing.expectEqual(@as(usize, 5), words.len);
+        for (words, 1..) |word, i| {
+            try std.testing.expectEqual(@as(i64, @intCast(i)), word.int);
+        }
+    }
+
+    // Adjacent strings and numbers
+    {
+        const words = lex(allocator, "\"no\"\"space\"42\"between\"3.14");
+        try std.testing.expectEqual(@as(usize, 5), words.len);
+        try std.testing.expectEqualStrings("no", words[0].string);
+        try std.testing.expectEqualStrings("space", words[1].string);
+        try std.testing.expectEqual(@as(i64, 42), words[2].int);
+        try std.testing.expectEqualStrings("between", words[3].string);
+        try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[4].float, 0.001);
+    }
+
+    // Empty input
+    {
+        const words = lex(allocator, "");
+        try std.testing.expectEqual(@as(usize, 0), words.len);
+    }
+
+    // Only whitespace
+    {
+        const words = lex(allocator, "   \n\t  \n  ");
+        try std.testing.expectEqual(@as(usize, 0), words.len);
+    }
+}
