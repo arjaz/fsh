@@ -1,9 +1,11 @@
 const std = @import("std");
+const process = std.process;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
+const StaticStringMap = std.StaticStringMap;
 
 fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
     if (!condition) std.debug.panic(format, args);
@@ -20,6 +22,15 @@ const Word = union(enum) {
     float: f64,
     string: []const u8,
     identifier: []const u8,
+
+    fn print(word: Word) void {
+        switch (word) {
+            .int => std.debug.print("{d} ", .{word.int}),
+            .float => std.debug.print("{d} ", .{word.float}),
+            .string => std.debug.print("{s} ", .{word.string}),
+            .identifier => std.debug.print("'{s} ", .{word.identifier}),
+        }
+    }
 };
 
 const Definition = struct {
@@ -32,7 +43,7 @@ const Definition = struct {
 const Machine = struct {
     arena: Allocator,
     data_stack_len: u64,
-    data_stack: []i64,
+    data_stack: []Word,
     call_stack_len: u64,
     call_stack: []u64,
     dictionary_len: u64,
@@ -40,8 +51,8 @@ const Machine = struct {
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
-        const data_stack_ptr = try arena.alloc(i64, stack_cap);
-        @memset(data_stack_ptr, 0);
+        const data_stack_ptr = try arena.alloc(Word, stack_cap);
+        @memset(data_stack_ptr, Word{ .int = 0 });
         const call_stack_ptr = try arena.alloc(u64, stack_cap);
         @memset(call_stack_ptr, 0);
         const dictionary_ptr = try arena.alloc(Definition, stack_cap);
@@ -57,6 +68,13 @@ const Machine = struct {
         };
     }
 
+    fn dictionary_lookup(machine: Machine, name: []const u8) ?Definition {
+        for (machine.dictionary) |def|
+            if (mem.eql(u8, name, def.name))
+                return def;
+        return null;
+    }
+
     fn push_definition(machine: *Machine, definition: Definition) u32 {
         assert(machine.dictionary_len >= std.math.maxInt(u32), "dictionary overflow", .{});
         machine.dictionaries[machine.dictionary_len] = definition;
@@ -67,29 +85,34 @@ const Machine = struct {
 };
 
 fn interpret(machine: *Machine, words: []const Word) void {
-    var ip: u32 = 0;
+    var word_index: u32 = 0;
     while (true) {
-        const word = words[ip];
+        const word = words[word_index];
 
         switch (word) {
             .int => |num| {
-                machine.data_stack[machine.data_stack_len] = num;
+                machine.data_stack[machine.data_stack_len] = Word{ .int = num };
                 machine.data_stack_len += 1;
             },
+
             .float => |num| {
-                machine.data_stack[machine.data_stack_len] = @intFromFloat(num);
+                machine.data_stack[machine.data_stack_len] = Word{ .float = num };
                 machine.data_stack_len += 1;
             },
+
             .string => |str| {
-                std.debug.print("(string: \"{s}\")\n", .{str});
+                machine.data_stack[machine.data_stack_len] = Word{ .string = str };
+                machine.data_stack_len += 1;
             },
+
             .identifier => |id| {
+                // First check for builtins
                 if (mem.eql(u8, id, "+")) {
                     assert(machine.data_stack_len >= 2, "not enough arguments", .{});
                     const top1 = machine.data_stack[machine.data_stack_len - 1];
                     const top2 = machine.data_stack[machine.data_stack_len - 2];
-                    const sum = top1 + top2;
-                    machine.data_stack[machine.data_stack_len - 2] = sum;
+                    const sum = top1.int + top2.int;
+                    machine.data_stack[machine.data_stack_len - 2] = Word{ .int = sum };
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, "dup")) {
                     assert(machine.data_stack_len > 0, "not enough arguments", .{});
@@ -103,16 +126,25 @@ fn interpret(machine: *Machine, words: []const Word) void {
                 } else if (mem.eql(u8, id, "drop")) {
                     assert(machine.data_stack_len > 0, "not enough arguments", .{});
                     machine.data_stack_len -= 1;
-                } else {
+                } else if (mem.eql(u8, id, ".")) {
+                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
+                    machine.data_stack[machine.data_stack_len - 1].print();
+                    machine.data_stack_len -= 1;
+                }
+                // if not a builtin try to lookup in dictionary
+                else if (machine.dictionary_lookup(id)) |def| {
+                    assert(false, "todo", .{});
+                    _ = def;
+                }
+                // if not in dictionary, lookup in path?
+                else {
                     assert(false, "todo", .{});
                 }
             },
         }
 
-        std.debug.print("word  {any}\n", .{word});
-        std.debug.print("stack {any}\n", .{machine.data_stack[0..machine.data_stack_len]});
-        ip += 1;
-        if (ip >= words.len) break;
+        word_index += 1;
+        if (word_index >= words.len) break;
     }
 }
 
@@ -134,9 +166,9 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
 
     while (index < input.len) {
         // Skip whitespace
-        while (index < input.len and (input[index] == ' ' or input[index] == '\n' or input[index] == '\t')) {
+        while (index < input.len and
+            (input[index] == ' ' or input[index] == '\n' or input[index] == '\t'))
             index += 1;
-        }
 
         if (index >= input.len) break;
 
@@ -172,7 +204,10 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
         } else {
             // Not a string, find the end of the word
             const word_start = index;
-            while (index < input.len and input[index] != ' ' and input[index] != '\n' and input[index] != '\t' and input[index] != '"') {
+            while (index < input.len and
+                input[index] != ' ' and input[index] != '\n' and
+                input[index] != '\t' and input[index] != '"')
+            {
                 index += 1;
             }
 
@@ -199,7 +234,17 @@ pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    const input = "0 1 swap \"hello world\" drop \"test\\nwith\\tescapes\" dup";
+    var args_iterator = process.argsWithAllocator(gpa.allocator()) catch oom();
+    // The first one is the binary name
+    _ = args_iterator.next();
+    const filename = args_iterator.next() orelse std.debug.panic("provide the input file", .{});
+    const input = std.fs.cwd().readFileAlloc(gpa.allocator(), filename, 4194304) catch |err| switch (err) {
+        error.OutOfMemory => oom(),
+        else => std.debug.panic("Something is wrong with your file", .{}),
+    };
+    defer gpa.allocator().free(input);
+    args_iterator.deinit();
+
     const words = lex(arena.allocator(), input);
     var machine = Machine.init(arena.allocator());
     interpret(&machine, words);
