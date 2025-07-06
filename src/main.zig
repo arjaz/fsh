@@ -81,8 +81,7 @@ fn interpret(machine: *Machine, words: []const Word) void {
                 machine.data_stack_len += 1;
             },
             .string => |str| {
-                _ = str;
-                assert(false, "strings not implemented", .{});
+                std.debug.print("(string: \"{s}\")\n", .{str});
             },
             .identifier => |id| {
                 if (mem.eql(u8, id, "+")) {
@@ -117,28 +116,81 @@ fn interpret(machine: *Machine, words: []const Word) void {
     }
 }
 
+fn parse_escape_sequence(char: u8) ?u8 {
+    return switch (char) {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '\\' => '\\',
+        '"' => '"',
+        '0' => 0,
+        else => null,
+    };
+}
+
 fn lex(arena: Allocator, input: []const u8) []const Word {
-    var iterator = mem.splitAny(u8, input, " \n\t");
+    var words = ArrayListUnmanaged(Word).empty;
+    var index: usize = 0;
 
-    var count: u32 = 0;
-    while (iterator.next()) |_|
-        count += 1;
-    iterator.reset();
+    while (index < input.len) {
+        // Skip whitespace
+        while (index < input.len and (input[index] == ' ' or input[index] == '\n' or input[index] == '\t')) {
+            index += 1;
+        }
 
-    var words = arena.alloc(Word, count) catch oom();
-    var i: u32 = 0;
-    while (iterator.next()) |word| : (i += 1) {
-        // For now, just basic lexing - try to parse as int, float, or identifier
-        if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
-            words[i] = .{ .int = num };
-        } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
-            words[i] = .{ .float = num };
+        if (index >= input.len) break;
+
+        if (input[index] == '"') {
+            // Skip opening quote
+            index += 1;
+            var string_buf = ArrayListUnmanaged(u8).empty;
+
+            while (index < input.len and input[index] != '"') {
+                if (input[index] == '\\' and index + 1 < input.len) {
+                    index += 1;
+                    if (parse_escape_sequence(input[index])) |escaped| {
+                        string_buf.append(arena, escaped) catch oom();
+                    } else {
+                        // Invalid escape sequence, just add the character
+                        string_buf.append(arena, input[index]) catch oom();
+                    }
+                } else {
+                    string_buf.append(arena, input[index]) catch oom();
+                }
+                index += 1;
+            }
+
+            if (index < input.len) {
+                // Skip closing quote
+                index += 1;
+            } else {
+                // TODO: proper errors mechanism
+                assert(false, "unterminated string literal", .{});
+            }
+
+            words.append(arena, .{ .string = string_buf.items }) catch oom();
         } else {
-            // Everything else is an identifier for now (including operators)
-            words[i] = .{ .identifier = word };
+            // Not a string, find the end of the word
+            const word_start = index;
+            while (index < input.len and input[index] != ' ' and input[index] != '\n' and input[index] != '\t' and input[index] != '"') {
+                index += 1;
+            }
+
+            const word = input[word_start..index];
+
+            // Try to parse as int, float, or identifier
+            if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
+                words.append(arena, .{ .int = num }) catch oom();
+            } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
+                words.append(arena, .{ .float = num }) catch oom();
+            } else {
+                // Everything else is an identifier (including operators)
+                words.append(arena, .{ .identifier = word }) catch oom();
+            }
         }
     }
-    return words;
+
+    return words.toOwnedSlice(arena) catch oom();
 }
 
 pub fn main() void {
@@ -147,7 +199,7 @@ pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
-    const input = "0 1 swap drop dup";
+    const input = "0 1 swap \"hello world\" drop \"test\\nwith\\tescapes\" dup";
     const words = lex(arena.allocator(), input);
     var machine = Machine.init(arena.allocator());
     interpret(&machine, words);
