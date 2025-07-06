@@ -15,12 +15,17 @@ fn oom() noreturn {
 
 const stack_cap = 2 << 16;
 
-const Word = []const u8;
+const Word = union(enum) {
+    int: i64,
+    float: f64,
+    string: []const u8,
+    identifier: []const u8,
+};
 
 const Definition = struct {
     const empty = Definition{};
 
-    name: Word = &.{},
+    name: []const u8 = &.{},
     code: [64]u32 = .{0} ** 64,
 };
 
@@ -66,40 +71,52 @@ fn interpret(machine: *Machine, words: []const Word) void {
     while (true) {
         const word = words[ip];
 
-        if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
-            machine.data_stack[machine.data_stack_len] = num;
-            machine.data_stack_len += 1;
-        } else if (mem.eql(u8, word, "+")) {
-            assert(machine.data_stack_len >= 2, "not enough arguments", .{});
-            const top1 = machine.data_stack[machine.data_stack_len - 1];
-            const top2 = machine.data_stack[machine.data_stack_len - 2];
-            const sum = top1 + top2;
-            machine.data_stack[machine.data_stack_len - 2] = sum;
-            machine.data_stack_len -= 1;
-        } else if (mem.eql(u8, word, "dup")) {
-            assert(machine.data_stack_len > 0, "not enough arguments", .{});
-            machine.data_stack_len += 1;
-            machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
-        } else if (mem.eql(u8, word, "swap")) {
-            assert(machine.data_stack_len >= 2, "not enough arguments", .{});
-            const tmp = machine.data_stack[machine.data_stack_len - 1];
-            machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
-            machine.data_stack[machine.data_stack_len - 2] = tmp;
-        } else if (mem.eql(u8, word, "drop")) {
-            assert(machine.data_stack_len > 0, "not enough arguments", .{});
-            machine.data_stack_len -= 1;
-        } else {
-            assert(false, "todo", .{});
+        switch (word) {
+            .int => |num| {
+                machine.data_stack[machine.data_stack_len] = num;
+                machine.data_stack_len += 1;
+            },
+            .float => |num| {
+                machine.data_stack[machine.data_stack_len] = @intFromFloat(num);
+                machine.data_stack_len += 1;
+            },
+            .string => |str| {
+                _ = str;
+                assert(false, "strings not implemented", .{});
+            },
+            .identifier => |id| {
+                if (mem.eql(u8, id, "+")) {
+                    assert(machine.data_stack_len >= 2, "not enough arguments", .{});
+                    const top1 = machine.data_stack[machine.data_stack_len - 1];
+                    const top2 = machine.data_stack[machine.data_stack_len - 2];
+                    const sum = top1 + top2;
+                    machine.data_stack[machine.data_stack_len - 2] = sum;
+                    machine.data_stack_len -= 1;
+                } else if (mem.eql(u8, id, "dup")) {
+                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
+                    machine.data_stack_len += 1;
+                    machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
+                } else if (mem.eql(u8, id, "swap")) {
+                    assert(machine.data_stack_len >= 2, "not enough arguments", .{});
+                    const tmp = machine.data_stack[machine.data_stack_len - 1];
+                    machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
+                    machine.data_stack[machine.data_stack_len - 2] = tmp;
+                } else if (mem.eql(u8, id, "drop")) {
+                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
+                    machine.data_stack_len -= 1;
+                } else {
+                    assert(false, "todo", .{});
+                }
+            },
         }
 
-        std.debug.print("word  {s}\n", .{word});
+        std.debug.print("word  {any}\n", .{word});
         std.debug.print("stack {any}\n", .{machine.data_stack[0..machine.data_stack_len]});
         ip += 1;
         if (ip >= words.len) break;
     }
 }
 
-// TODO: strings and stuff
 fn lex(arena: Allocator, input: []const u8) []const Word {
     var iterator = mem.splitAny(u8, input, " \n\t");
 
@@ -108,10 +125,19 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
         count += 1;
     iterator.reset();
 
-    var words = arena.alloc([]const u8, count) catch oom();
+    var words = arena.alloc(Word, count) catch oom();
     var i: u32 = 0;
-    while (iterator.next()) |word| : (i += 1)
-        words[i] = word;
+    while (iterator.next()) |word| : (i += 1) {
+        // For now, just basic lexing - try to parse as int, float, or identifier
+        if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
+            words[i] = .{ .int = num };
+        } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
+            words[i] = .{ .float = num };
+        } else {
+            // Everything else is an identifier for now (including operators)
+            words[i] = .{ .identifier = word };
+        }
+    }
     return words;
 }
 
