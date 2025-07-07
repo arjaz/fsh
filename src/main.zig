@@ -3,6 +3,7 @@ const process = std.process;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const StaticStringMap = std.StaticStringMap;
@@ -37,7 +38,7 @@ const Definition = struct {
     const empty = Definition{};
 
     name: []const u8 = &.{},
-    code: [64]u32 = .{0} ** 64,
+    code: [64]?Word = .{null} ** 64,
 };
 
 const Machine = struct {
@@ -84,7 +85,7 @@ const Machine = struct {
     }
 };
 
-fn interpret(machine: *Machine, words: []const Word) void {
+fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
     var word_index: u32 = 0;
     while (true) {
         const word = words[word_index];
@@ -136,9 +137,9 @@ fn interpret(machine: *Machine, words: []const Word) void {
                     assert(false, "todo", .{});
                     _ = def;
                 }
-                // if not in dictionary, lookup in path?
+                // if not in dictionary, try to execute as a command
                 else {
-                    assert(false, "todo", .{});
+                    process.execv(arena, &.{id}) catch {};
                 }
             },
         }
@@ -146,18 +147,6 @@ fn interpret(machine: *Machine, words: []const Word) void {
         word_index += 1;
         if (word_index >= words.len) break;
     }
-}
-
-fn parse_escape_sequence(char: u8) ?u8 {
-    return switch (char) {
-        'n' => '\n',
-        't' => '\t',
-        'r' => '\r',
-        '\\' => '\\',
-        '"' => '"',
-        '0' => 0,
-        else => null,
-    };
 }
 
 fn lex(arena: Allocator, input: []const u8) []const Word {
@@ -173,43 +162,31 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
         if (index >= input.len) break;
 
         if (input[index] == '"') {
+            const start = index;
             // Skip opening quote
             index += 1;
-            var string_buf = ArrayListUnmanaged(u8).empty;
 
-            while (index < input.len and input[index] != '"') {
-                if (input[index] == '\\' and index + 1 < input.len) {
+            while (index < input.len and input[index] != '"') : (index += 1) {
+                if (input[index] == '\\' and index + 1 < input.len)
                     index += 1;
-                    if (parse_escape_sequence(input[index])) |escaped| {
-                        string_buf.append(arena, escaped) catch oom();
-                    } else {
-                        // Invalid escape sequence, just add the character
-                        string_buf.append(arena, input[index]) catch oom();
-                    }
-                } else {
-                    string_buf.append(arena, input[index]) catch oom();
-                }
-                index += 1;
             }
 
+            const end = index + 1;
             if (index < input.len) {
                 // Skip closing quote
                 index += 1;
             } else {
-                // TODO: proper errors mechanism
                 assert(false, "unterminated string literal", .{});
             }
 
-            words.append(arena, .{ .string = string_buf.items }) catch oom();
+            words.append(arena, .{ .string = input[start..end] }) catch oom();
         } else {
             // Not a string, find the end of the word
             const word_start = index;
             while (index < input.len and
                 input[index] != ' ' and input[index] != '\n' and
                 input[index] != '\t' and input[index] != '"')
-            {
                 index += 1;
-            }
 
             const word = input[word_start..index];
 
@@ -247,7 +224,7 @@ pub fn main() void {
 
     const words = lex(arena.allocator(), input);
     var machine = Machine.init(arena.allocator());
-    interpret(&machine, words);
+    interpret(arena.allocator(), &machine, words);
 }
 
 test "lex integers" {
@@ -327,37 +304,37 @@ test "lex strings" {
     {
         const words = lex(allocator, "\"hello\" \"world\" \"\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("hello", words[0].string);
-        try std.testing.expectEqualStrings("world", words[1].string);
-        try std.testing.expectEqualStrings("", words[2].string);
+        try std.testing.expectEqualStrings("\"hello\"", words[0].string);
+        try std.testing.expectEqualStrings("\"world\"", words[1].string);
+        try std.testing.expectEqualStrings("\"\"", words[2].string);
     }
 
     // Escape sequences
     {
         const words = lex(allocator, "\"\\n\\t\\r\" \"\\\"quoted\\\"\" \"back\\\\slash\" \"null\\0char\"");
         try std.testing.expectEqual(@as(usize, 4), words.len);
-        try std.testing.expectEqualStrings("\n\t\r", words[0].string);
-        try std.testing.expectEqualStrings("\"quoted\"", words[1].string);
-        try std.testing.expectEqualStrings("back\\slash", words[2].string);
-        try std.testing.expectEqualStrings("null\x00char", words[3].string);
+        try std.testing.expectEqualStrings("\"\\n\\t\\r\"", words[0].string);
+        try std.testing.expectEqualStrings("\"\\\"quoted\\\"\"", words[1].string);
+        try std.testing.expectEqualStrings("\"back\\\\slash\"", words[2].string);
+        try std.testing.expectEqualStrings("\"null\\0char\"", words[3].string);
     }
 
     // Strings with spaces
     {
         const words = lex(allocator, "\"hello world\" \"multiple   spaces\" \"tabs\\there\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("hello world", words[0].string);
-        try std.testing.expectEqualStrings("multiple   spaces", words[1].string);
-        try std.testing.expectEqualStrings("tabs\there", words[2].string);
+        try std.testing.expectEqualStrings("\"hello world\"", words[0].string);
+        try std.testing.expectEqualStrings("\"multiple   spaces\"", words[1].string);
+        try std.testing.expectEqualStrings("\"tabs\\there\"", words[2].string);
     }
 
     // Invalid escape sequences
     {
         const words = lex(allocator, "\"\\x\" \"\\q\" \"\\1\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("x", words[0].string);
-        try std.testing.expectEqualStrings("q", words[1].string);
-        try std.testing.expectEqualStrings("1", words[2].string);
+        try std.testing.expectEqualStrings("\"\\x\"", words[0].string);
+        try std.testing.expectEqualStrings("\"\\q\"", words[1].string);
+        try std.testing.expectEqualStrings("\"\\1\"", words[2].string);
     }
 }
 
@@ -391,6 +368,15 @@ test "lex identifiers" {
         try std.testing.expectEqualStrings("CamelCase", words[4].identifier);
     }
 
+    // Funny identifiers
+    {
+        const words = lex(allocator, "1+ 2/ works?");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqualStrings("1+", words[0].identifier);
+        try std.testing.expectEqualStrings("2/", words[1].identifier);
+        try std.testing.expectEqualStrings("works?", words[2].identifier);
+    }
+
     // Special characters
     {
         const words = lex(allocator, "! @ # $ % ^ & = < > ? :");
@@ -413,10 +399,10 @@ test "lex mixed input" {
         try std.testing.expectEqual(@as(usize, 7), words.len);
         try std.testing.expectEqual(@as(i64, 42), words[0].int);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[1].float, 0.001);
-        try std.testing.expectEqualStrings("hello", words[2].string);
+        try std.testing.expectEqualStrings("\"hello\"", words[2].string);
         try std.testing.expectEqualStrings("+", words[3].identifier);
         try std.testing.expectEqual(@as(i64, -17), words[4].int);
-        try std.testing.expectEqualStrings("world", words[5].string);
+        try std.testing.expectEqualStrings("\"world\"", words[5].string);
         try std.testing.expectEqualStrings("swap", words[6].identifier);
     }
 
@@ -433,10 +419,10 @@ test "lex mixed input" {
     {
         const words = lex(allocator, "\"no\"\"space\"42\"between\"3.14");
         try std.testing.expectEqual(@as(usize, 5), words.len);
-        try std.testing.expectEqualStrings("no", words[0].string);
-        try std.testing.expectEqualStrings("space", words[1].string);
+        try std.testing.expectEqualStrings("\"no\"", words[0].string);
+        try std.testing.expectEqualStrings("\"space\"", words[1].string);
         try std.testing.expectEqual(@as(i64, 42), words[2].int);
-        try std.testing.expectEqualStrings("between", words[3].string);
+        try std.testing.expectEqualStrings("\"between\"", words[3].string);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[4].float, 0.001);
     }
 
