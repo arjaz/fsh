@@ -18,6 +18,20 @@ fn oom() noreturn {
 
 const stack_cap = 2 << 16;
 
+const Value = union(enum) {
+    int: i64,
+    float: f64,
+    string: []const u8,
+
+    fn print(value: Value) void {
+        switch (value) {
+            .int => std.debug.print("{d} ", .{value.int}),
+            .float => std.debug.print("{d} ", .{value.float}),
+            .string => std.debug.print("{s} ", .{value.string}),
+        }
+    }
+};
+
 const Word = union(enum) {
     int: i64,
     float: f64,
@@ -38,13 +52,14 @@ const Definition = struct {
     const empty = Definition{};
 
     name: []const u8 = &.{},
+    code_len: u8 = 0,
     code: [64]?Word = .{null} ** 64,
 };
 
 const Machine = struct {
     arena: Allocator,
     data_stack_len: u64,
-    data_stack: []Word,
+    data_stack: []Value,
     call_stack_len: u64,
     call_stack: []u64,
     dictionary_len: u64,
@@ -52,8 +67,8 @@ const Machine = struct {
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
-        const data_stack_ptr = try arena.alloc(Word, stack_cap);
-        @memset(data_stack_ptr, Word{ .int = 0 });
+        const data_stack_ptr = try arena.alloc(Value, stack_cap);
+        @memset(data_stack_ptr, Value{ .int = 0 });
         const call_stack_ptr = try arena.alloc(u64, stack_cap);
         @memset(call_stack_ptr, 0);
         const dictionary_ptr = try arena.alloc(Definition, stack_cap);
@@ -92,17 +107,17 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
 
         switch (word) {
             .int => |num| {
-                machine.data_stack[machine.data_stack_len] = Word{ .int = num };
+                machine.data_stack[machine.data_stack_len] = Value{ .int = num };
                 machine.data_stack_len += 1;
             },
 
             .float => |num| {
-                machine.data_stack[machine.data_stack_len] = Word{ .float = num };
+                machine.data_stack[machine.data_stack_len] = Value{ .float = num };
                 machine.data_stack_len += 1;
             },
 
             .string => |str| {
-                machine.data_stack[machine.data_stack_len] = Word{ .string = str };
+                machine.data_stack[machine.data_stack_len] = Value{ .string = str };
                 machine.data_stack_len += 1;
             },
 
@@ -113,7 +128,7 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
                     const top1 = machine.data_stack[machine.data_stack_len - 1];
                     const top2 = machine.data_stack[machine.data_stack_len - 2];
                     const sum = top1.int + top2.int;
-                    machine.data_stack[machine.data_stack_len - 2] = Word{ .int = sum };
+                    machine.data_stack[machine.data_stack_len - 2] = Value{ .int = sum };
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, "dup")) {
                     assert(machine.data_stack_len > 0, "not enough arguments", .{});
