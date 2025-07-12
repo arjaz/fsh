@@ -124,26 +124,21 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
             .identifier => |id| {
                 // First check for builtins
                 if (mem.eql(u8, id, "+")) {
-                    assert(machine.data_stack_len >= 2, "not enough arguments", .{});
                     const top1 = machine.data_stack[machine.data_stack_len - 1];
                     const top2 = machine.data_stack[machine.data_stack_len - 2];
                     const sum = top1.int + top2.int;
                     machine.data_stack[machine.data_stack_len - 2] = Value{ .int = sum };
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, "dup")) {
-                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
                     machine.data_stack_len += 1;
                     machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
                 } else if (mem.eql(u8, id, "swap")) {
-                    assert(machine.data_stack_len >= 2, "not enough arguments", .{});
                     const tmp = machine.data_stack[machine.data_stack_len - 1];
                     machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
                     machine.data_stack[machine.data_stack_len - 2] = tmp;
                 } else if (mem.eql(u8, id, "drop")) {
-                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, ".")) {
-                    assert(machine.data_stack_len > 0, "not enough arguments", .{});
                     machine.data_stack[machine.data_stack_len - 1].print();
                     machine.data_stack_len -= 1;
                 }
