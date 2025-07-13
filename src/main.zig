@@ -1,4 +1,5 @@
 const std = @import("std");
+const meta = std.meta;
 const process = std.process;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
@@ -23,8 +24,8 @@ fn exit(comptime format: []const u8, args: anytype) noreturn {
 
 fn print_stderr(comptime format: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    const bw = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
+    const bw = std.Progress.lockStderrWriter(&buffer);
+    defer std.Progress.unlockStderrWriter();
     nosuspend bw.print(format, args) catch return;
 }
 
@@ -54,11 +55,47 @@ const Value = union(enum) {
     }
 };
 
+// Exactly the same name is also used for parsing
+const Builtin = enum {
+    // booleans
+    @"=",
+    @"!=",
+    @"<",
+    @"<=",
+    @">",
+    @">=",
+    // arithmetic
+    @"+",
+    @"*",
+    xor,
+    @"or",
+    @"and",
+    @"-",
+    @"<<",
+    @">>",
+    @"/",
+    @"%",
+    // stack manipulation
+    swap,
+    dup,
+    over,
+    rot,
+    @"-rot",
+    drop,
+    nip,
+    tuck,
+    // printing
+    @".",
+    // OS interactions
+    ls,
+};
+
 const Word = union(enum) {
     int: i64,
     float: f64,
     string: []const u8,
     identifier: []const u8,
+    builtin: Builtin,
 
     fn print(word: Word) void {
         switch (word) {
@@ -104,6 +141,29 @@ const Machine = struct {
         };
     }
 
+    fn push(machine: *Machine, value: Value) void {
+        machine.data_stack_len += 1;
+        machine.data_stack[machine.data_stack_len - 1] = value;
+    }
+
+    fn pop(machine: *Machine) Value {
+        const top1 = machine.top();
+        machine.data_stack_len -= 1;
+        return top1;
+    }
+
+    fn top(machine: Machine) Value {
+        return machine.data_stack[machine.data_stack_len - 1];
+    }
+
+    fn top2(machine: Machine) Value {
+        return machine.data_stack[machine.data_stack_len - 2];
+    }
+
+    fn top3(machine: Machine) Value {
+        return machine.data_stack[machine.data_stack_len - 3];
+    }
+
     fn dictionary_lookup(machine: Machine, name: []const u8) ?Definition {
         for (machine.dictionary) |def|
             if (mem.eql(u8, name, def.name))
@@ -120,8 +180,200 @@ const Machine = struct {
     }
 };
 
+fn report_error() !void {
+    return error.InterpretationErrror;
+}
+
+fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !void {
+    switch (builtin) {
+        .@"=" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            machine.push(if (meta.eql(arg1, arg2)) .{ .int = 1 } else .{ .int = 0 });
+        },
+
+        .@"!=" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            machine.push(if (!meta.eql(arg1, arg2)) .{ .int = 1 } else .{ .int = 0 });
+        },
+
+        .@"<" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            switch (arg1) {
+                .int => {
+                    switch (arg2) {
+                        .int => machine.push(if (arg1.int < arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                .float => {
+                    switch (arg2) {
+                        .float => machine.push(if (arg1.float < arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                else => try report_error(),
+            }
+        },
+
+        .@"<=" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            switch (arg1) {
+                .int => {
+                    switch (arg2) {
+                        .int => machine.push(if (arg1.int <= arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                .float => {
+                    switch (arg2) {
+                        .float => machine.push(if (arg1.float <= arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                else => try report_error(),
+            }
+        },
+
+        .@">" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            switch (arg1) {
+                .int => {
+                    switch (arg2) {
+                        .int => machine.push(if (arg1.int > arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                .float => {
+                    switch (arg2) {
+                        .float => machine.push(if (arg1.float > arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                else => try report_error(),
+            }
+        },
+
+        .@">=" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            switch (arg1) {
+                .int => {
+                    switch (arg2) {
+                        .int => machine.push(if (arg1.int >= arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                .float => {
+                    switch (arg2) {
+                        .float => machine.push(if (arg1.float >= arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        else => try report_error(),
+                    }
+                },
+                else => try report_error(),
+            }
+        },
+
+        .@"+" => {},
+
+        .@"*" => {},
+
+        .xor => {},
+
+        .@"or" => {},
+
+        .@"and" => {},
+
+        .@"-" => {},
+
+        .@"<<" => {},
+
+        .@">>" => {},
+
+        .@"/" => {},
+
+        .@"%" => {},
+
+        .swap => {
+            const top = machine.pop();
+            const top2 = machine.pop();
+            machine.push(top);
+            machine.push(top2);
+        },
+
+        .dup => {
+            machine.push(machine.top());
+        },
+
+        .over => {
+            machine.push(machine.top2());
+        },
+
+        .rot => {
+            const top = machine.pop();
+            const top2 = machine.pop();
+            const top3 = machine.pop();
+            machine.push(top2);
+            machine.push(top);
+            machine.push(top3);
+        },
+
+        .@"-rot" => {
+            const top = machine.pop();
+            const top2 = machine.pop();
+            const top3 = machine.pop();
+            machine.push(top);
+            machine.push(top3);
+            machine.push(top2);
+        },
+
+        .drop => {
+            _ = machine.pop();
+        },
+
+        .nip => {
+            const top = machine.pop();
+            _ = machine.pop();
+            machine.push(top);
+        },
+
+        .tuck => {
+            const top = machine.pop();
+            const top2 = machine.pop();
+            machine.push(top);
+            machine.push(top2);
+            machine.push(top);
+        },
+
+        .@"." => {
+            const top = machine.pop();
+            top.print();
+            print_stderr(" ", .{});
+        },
+
+        // TODO: how do we pass the arguments?
+        .ls => {
+            var array = ArrayList(Value).init(arena);
+            var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
+            defer dir.close();
+            var iterator = dir.iterateAssumeFirstIteration();
+            while (iterator.next() catch null) |entry| {
+                const owned = arena.alloc(u8, entry.name.len) catch oom();
+                @memcpy(owned, entry.name);
+                array.append(.{ .string = owned }) catch oom();
+            }
+            machine.data_stack_len += 1;
+            machine.data_stack[machine.data_stack_len - 1] = .{ .array = array.items };
+        },
+    }
+}
+
 // TODO: memory management, some other time
-fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
+fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
     while (true) {
         const word = words[machine.wp];
 
@@ -141,49 +393,16 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
                 machine.data_stack_len += 1;
             },
 
+            .builtin => |builtin| try interpret_builtin(arena, machine, builtin),
+
             .identifier => |id| {
-                // First check for builtins
-                if (mem.eql(u8, id, "+")) {
-                    const top1 = machine.data_stack[machine.data_stack_len - 1];
-                    const top2 = machine.data_stack[machine.data_stack_len - 2];
-                    const sum = top1.int + top2.int;
-                    machine.data_stack[machine.data_stack_len - 2] = Value{ .int = sum };
-                    machine.data_stack_len -= 1;
-                } else if (mem.eql(u8, id, "dup")) {
-                    machine.data_stack_len += 1;
-                    machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
-                } else if (mem.eql(u8, id, "swap")) {
-                    const tmp = machine.data_stack[machine.data_stack_len - 1];
-                    machine.data_stack[machine.data_stack_len - 1] = machine.data_stack[machine.data_stack_len - 2];
-                    machine.data_stack[machine.data_stack_len - 2] = tmp;
-                } else if (mem.eql(u8, id, "drop")) {
-                    machine.data_stack_len -= 1;
-                } else if (mem.eql(u8, id, ".")) {
-                    machine.data_stack[machine.data_stack_len - 1].print();
-                    print_stderr(" ", .{});
-                    machine.data_stack_len -= 1;
-                } else if (mem.eql(u8, id, "ls")) {
-                    var array = ArrayList(Value).init(arena);
-                    var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
-                    defer dir.close();
-                    var iterator = dir.iterateAssumeFirstIteration();
-                    while (iterator.next() catch null) |entry| {
-                        const owned = arena.alloc(u8, entry.name.len) catch oom();
-                        @memcpy(owned, entry.name);
-                        array.append(.{ .string = owned }) catch oom();
-                    }
-                    machine.data_stack_len += 1;
-                    machine.data_stack[machine.data_stack_len - 1] = .{ .array = array.items };
-                }
-                // if not a builtin try to lookup in dictionary
-                else if (machine.dictionary_lookup(id)) |def| {
+                if (machine.dictionary_lookup(id)) |def| {
                     assert(false, "todo", .{});
                     _ = def;
                 }
                 // if not in dictionary, try to execute as a command
-                else {
-                    process.execv(arena, &.{id}) catch {};
-                }
+                // TODO: how do we pass the arguments?
+                else process.execv(arena, &.{id}) catch {};
             },
         }
 
@@ -238,8 +457,15 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
                 words.append(arena, .{ .int = num }) catch oom();
             } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
                 words.append(arena, .{ .float = num }) catch oom();
-            } else {
-                // Everything else is an identifier (including operators)
+            } else parsed: {
+                inline for (meta.fields(Builtin)) |enumField| {
+                    if (mem.eql(u8, word, enumField.name)) {
+                        words.append(arena, .{
+                            .builtin = @field(Builtin, enumField.name),
+                        }) catch oom();
+                        break :parsed;
+                    }
+                }
                 words.append(arena, .{ .identifier = word }) catch oom();
             }
         }
@@ -248,26 +474,28 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
     return words.toOwnedSlice(arena) catch oom();
 }
 
-pub fn main() void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
+pub fn main() !void {
+    var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    var gpa_allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    const arena_allocator = arena.allocator();
     defer arena.deinit();
 
-    var args_iterator = process.argsWithAllocator(gpa.allocator()) catch oom();
+    var args_iterator = process.argsWithAllocator(gpa_allocator) catch oom();
     // The first one is the binary name
     _ = args_iterator.next();
     const filename = args_iterator.next() orelse exit("provide the input file", .{});
-    const input = std.fs.cwd().readFileAlloc(gpa.allocator(), filename, 4194304) catch |err| switch (err) {
+    const input = std.fs.cwd().readFileAlloc(gpa_allocator, filename, 4194304) catch |err| switch (err) {
         error.OutOfMemory => oom(),
         else => exit("Something is wrong with your file", .{}),
     };
-    defer gpa.allocator().free(input);
+    defer gpa_allocator.free(input);
     args_iterator.deinit();
 
-    const words = lex(arena.allocator(), input);
-    var machine = Machine.init(arena.allocator());
-    interpret(arena.allocator(), &machine, words);
+    const words = lex(arena_allocator, input);
+    var machine = Machine.init(arena_allocator);
+    try interpret(arena_allocator, &machine, words);
 }
 
 test "lex integers" {
