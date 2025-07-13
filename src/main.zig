@@ -21,6 +21,13 @@ fn exit(comptime format: []const u8, args: anytype) noreturn {
     process.exit(1);
 }
 
+fn print_stderr(comptime format: []const u8, args: anytype) void {
+    var buffer: [64]u8 = undefined;
+    const bw = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
+    nosuspend bw.print(format, args) catch return;
+}
+
 const STACK_CAP = 2 << 16;
 
 const Value = union(enum) {
@@ -31,17 +38,17 @@ const Value = union(enum) {
 
     fn print(value: Value) void {
         switch (value) {
-            .int => std.debug.print("{d}", .{value.int}),
-            .float => std.debug.print("{d}", .{value.float}),
-            .string => std.debug.print("{s}", .{value.string}),
+            .int => print_stderr("{d}", .{value.int}),
+            .float => print_stderr("{d}", .{value.float}),
+            .string => print_stderr("{s}", .{value.string}),
             .array => {
-                std.debug.print("[", .{});
+                print_stderr("[", .{});
                 for (value.array, 0..) |v, i| {
                     v.print();
                     if (i + 1 != value.array.len)
-                        std.debug.print(" ", .{});
+                        print_stderr(" ", .{});
                 }
-                std.debug.print("]", .{});
+                print_stderr("]", .{});
             },
         }
     }
@@ -55,10 +62,10 @@ const Word = union(enum) {
 
     fn print(word: Word) void {
         switch (word) {
-            .int => std.debug.print("{d} ", .{word.int}),
-            .float => std.debug.print("{d} ", .{word.float}),
-            .string => std.debug.print("{s} ", .{word.string}),
-            .identifier => std.debug.print("'{s} ", .{word.identifier}),
+            .int => print_stderr("{d} ", .{word.int}),
+            .float => print_stderr("{d} ", .{word.float}),
+            .string => print_stderr("{s} ", .{word.string}),
+            .identifier => print_stderr("'{s} ", .{word.identifier}),
         }
     }
 };
@@ -153,7 +160,7 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, ".")) {
                     machine.data_stack[machine.data_stack_len - 1].print();
-                    std.debug.print(" ", .{});
+                    print_stderr(" ", .{});
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, "ls")) {
                     var array = ArrayList(Value).init(arena);
