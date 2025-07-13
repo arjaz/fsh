@@ -68,16 +68,16 @@ const Definition = struct {
 
     name: []const u8 = &.{},
     code_len: u8 = 0,
-    code: [64]?Word = .{null} ** 64,
+    code: [64]Word = .{Word{ .int = 0 }} ** 64,
 };
 
 const Machine = struct {
     arena: Allocator,
-    data_stack_len: u64,
+    data_stack_len: u64 = 0,
     data_stack: []Value,
-    call_stack_len: u64,
+    call_stack_len: u64 = 0,
     call_stack: []u64,
-    dictionary_len: u64,
+    dictionary_len: u64 = 0,
     dictionary: []Definition,
 
     fn init(arena: Allocator) Machine {
@@ -90,11 +90,8 @@ const Machine = struct {
         @memset(dictionary_ptr, .empty);
         return .{
             .arena = arena,
-            .data_stack_len = 0,
             .data_stack = data_stack_ptr,
-            .call_stack_len = 0,
             .call_stack = call_stack_ptr,
-            .dictionary_len = 0,
             .dictionary = dictionary_ptr,
         };
     }
