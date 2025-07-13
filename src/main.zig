@@ -21,7 +21,7 @@ fn exit(comptime format: []const u8, args: anytype) noreturn {
     process.exit(1);
 }
 
-const stack_cap = 2 << 16;
+const STACK_CAP = 2 << 16;
 
 const Value = union(enum) {
     int: i64,
@@ -83,11 +83,11 @@ const Machine = struct {
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
-        const data_stack_ptr = try arena.alloc(Value, stack_cap);
+        const data_stack_ptr = try arena.alloc(Value, STACK_CAP);
         @memset(data_stack_ptr, Value{ .int = 0 });
-        const call_stack_ptr = try arena.alloc(u64, stack_cap);
+        const call_stack_ptr = try arena.alloc(u64, STACK_CAP);
         @memset(call_stack_ptr, 0);
-        const dictionary_ptr = try arena.alloc(Definition, stack_cap);
+        const dictionary_ptr = try arena.alloc(Definition, STACK_CAP);
         @memset(dictionary_ptr, .empty);
         return .{
             .arena = arena,
