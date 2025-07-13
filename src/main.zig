@@ -79,6 +79,7 @@ const Machine = struct {
     call_stack: []u64,
     dictionary_len: u64 = 0,
     dictionary: []Definition,
+    wp: u32 = 0,
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
@@ -114,9 +115,8 @@ const Machine = struct {
 
 // TODO: memory management, some other time
 fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
-    var word_index: u32 = 0;
     while (true) {
-        const word = words[word_index];
+        const word = words[machine.wp];
 
         switch (word) {
             .int => |num| {
@@ -176,8 +176,8 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
             },
         }
 
-        word_index += 1;
-        if (word_index >= words.len) break;
+        machine.wp += 1;
+        if (machine.wp >= words.len) break;
     }
 }
 
