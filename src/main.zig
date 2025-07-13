@@ -9,11 +9,16 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const StaticStringMap = std.StaticStringMap;
 
 fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
-    if (!condition) std.debug.panic(format, args);
+    if (!condition) std.debug.panic(format ++ "\n", args);
 }
 
 fn oom() noreturn {
-    std.debug.panic("OOM", .{});
+    std.debug.panic("OOM\n", .{});
+}
+
+fn exit(comptime format: []const u8, args: anytype) noreturn {
+    std.debug.print(format ++ "\n", args);
+    process.exit(1);
 }
 
 const stack_cap = 2 << 16;
@@ -244,10 +249,10 @@ pub fn main() void {
     var args_iterator = process.argsWithAllocator(gpa.allocator()) catch oom();
     // The first one is the binary name
     _ = args_iterator.next();
-    const filename = args_iterator.next() orelse std.debug.panic("provide the input file", .{});
+    const filename = args_iterator.next() orelse exit("provide the input file", .{});
     const input = std.fs.cwd().readFileAlloc(gpa.allocator(), filename, 4194304) catch |err| switch (err) {
         error.OutOfMemory => oom(),
-        else => std.debug.panic("Something is wrong with your file", .{}),
+        else => exit("Something is wrong with your file", .{}),
     };
     defer gpa.allocator().free(input);
     args_iterator.deinit();
