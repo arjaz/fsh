@@ -164,10 +164,14 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) void {
                     machine.data_stack_len -= 1;
                 } else if (mem.eql(u8, id, "ls")) {
                     var array = ArrayList(Value).init(arena);
-                    const dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
+                    var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
+                    defer dir.close();
                     var iterator = dir.iterateAssumeFirstIteration();
-                    while (iterator.next() catch null) |entry|
-                        array.append(.{ .string = entry.name }) catch oom();
+                    while (iterator.next() catch null) |entry| {
+                        const owned = arena.alloc(u8, entry.name.len) catch oom();
+                        @memcpy(owned, entry.name);
+                        array.append(.{ .string = owned }) catch oom();
+                    }
                     machine.data_stack_len += 1;
                     machine.data_stack[machine.data_stack_len - 1] = .{ .array = array.items };
                 }
