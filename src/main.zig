@@ -31,11 +31,16 @@ fn print_stderr(comptime format: []const u8, args: anytype) void {
 
 const STACK_CAP = 2 << 16;
 
+// TODO: Refcount
 const Value = union(enum) {
     int: i64,
     float: f64,
     string: []const u8,
     array: []Value,
+
+    fn from_bool(b: bool) Value {
+        return if (b) .{ .int = 1 } else .{ .int = 0 };
+    }
 
     fn print(value: Value) void {
         switch (value) {
@@ -189,13 +194,13 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
         .@"=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(if (meta.eql(arg1, arg2)) .{ .int = 1 } else .{ .int = 0 });
+            machine.push(Value.from_bool(meta.eql(arg1, arg2)));
         },
 
         .@"!=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(if (!meta.eql(arg1, arg2)) .{ .int = 1 } else .{ .int = 0 });
+            machine.push(Value.from_bool(!meta.eql(arg1, arg2)));
         },
 
         .@"<" => {
@@ -204,13 +209,13 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
             switch (arg1) {
                 .int => {
                     switch (arg2) {
-                        .int => machine.push(if (arg1.int < arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        .int => machine.push(Value.from_bool(arg1.int < arg2.int)),
                         else => try report_error(),
                     }
                 },
                 .float => {
                     switch (arg2) {
-                        .float => machine.push(if (arg1.float < arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        .float => machine.push(Value.from_bool(arg1.float < arg2.float)),
                         else => try report_error(),
                     }
                 },
@@ -224,13 +229,13 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
             switch (arg1) {
                 .int => {
                     switch (arg2) {
-                        .int => machine.push(if (arg1.int <= arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        .int => machine.push(Value.from_bool(arg1.int <= arg2.int)),
                         else => try report_error(),
                     }
                 },
                 .float => {
                     switch (arg2) {
-                        .float => machine.push(if (arg1.float <= arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        .float => machine.push(Value.from_bool(arg1.float <= arg2.float)),
                         else => try report_error(),
                     }
                 },
@@ -244,13 +249,13 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
             switch (arg1) {
                 .int => {
                     switch (arg2) {
-                        .int => machine.push(if (arg1.int > arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        .int => machine.push(Value.from_bool(arg1.int > arg2.int)),
                         else => try report_error(),
                     }
                 },
                 .float => {
                     switch (arg2) {
-                        .float => machine.push(if (arg1.float > arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        .float => machine.push(Value.from_bool(arg1.float > arg2.float)),
                         else => try report_error(),
                     }
                 },
@@ -264,13 +269,13 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
             switch (arg1) {
                 .int => {
                     switch (arg2) {
-                        .int => machine.push(if (arg1.int >= arg2.int) .{ .int = 1 } else .{ .int = 0 }),
+                        .int => machine.push(Value.from_bool(arg1.int >= arg2.int)),
                         else => try report_error(),
                     }
                 },
                 .float => {
                     switch (arg2) {
-                        .float => machine.push(if (arg1.float >= arg2.float) .{ .float = 1 } else .{ .float = 0 }),
+                        .float => machine.push(Value.from_bool(arg1.float >= arg2.float)),
                         else => try report_error(),
                     }
                 },
