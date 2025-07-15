@@ -22,7 +22,7 @@ fn exit(comptime format: []const u8, args: anytype) noreturn {
     process.exit(1);
 }
 
-fn print_stderr(comptime format: []const u8, args: anytype) void {
+fn printStderr(comptime format: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
     const bw = std.Progress.lockStderrWriter(&buffer);
     defer std.Progress.unlockStderrWriter();
@@ -38,27 +38,27 @@ const Value = union(enum) {
     string: []const u8,
     array: []Value,
 
-    fn from_bool(b: bool) Value {
+    fn fromBool(b: bool) Value {
         return if (b) .{ .int = 1 } else .{ .int = 0 };
     }
 
-    fn same_tag(this: Value, other: Value) bool {
+    fn sameTag(this: Value, other: Value) bool {
         return meta.activeTag(this) == meta.activeTag(other);
     }
 
     fn print(value: Value) void {
         switch (value) {
-            .int => print_stderr("{d}", .{value.int}),
-            .float => print_stderr("{d}", .{value.float}),
-            .string => print_stderr("{s}", .{value.string}),
+            .int => printStderr("{d}", .{value.int}),
+            .float => printStderr("{d}", .{value.float}),
+            .string => printStderr("{s}", .{value.string}),
             .array => {
-                print_stderr("[", .{});
+                printStderr("[", .{});
                 for (value.array, 0..) |v, i| {
                     v.print();
                     if (i + 1 != value.array.len)
-                        print_stderr(" ", .{});
+                        printStderr(" ", .{});
                 }
-                print_stderr("]", .{});
+                printStderr("]", .{});
             },
         }
     }
@@ -108,10 +108,10 @@ const Word = union(enum) {
 
     fn print(word: Word) void {
         switch (word) {
-            .int => print_stderr("{d} ", .{word.int}),
-            .float => print_stderr("{d} ", .{word.float}),
-            .string => print_stderr("{s} ", .{word.string}),
-            .identifier => print_stderr("'{s} ", .{word.identifier}),
+            .int => printStderr("{d} ", .{word.int}),
+            .float => printStderr("{d} ", .{word.float}),
+            .string => printStderr("{s} ", .{word.string}),
+            .identifier => printStderr("'{s} ", .{word.identifier}),
         }
     }
 };
@@ -120,244 +120,244 @@ const Definition = struct {
     const empty = Definition{};
 
     name: []const u8 = &.{},
-    code_len: u8 = 0,
+    codeLen: u8 = 0,
     code: [64]Word = .{Word{ .int = 0 }} ** 64,
 };
 
 const Machine = struct {
     arena: Allocator,
-    data_stack_len: u64 = 0,
-    data_stack: []Value,
-    call_stack_len: u64 = 0,
-    call_stack: []u64,
-    dictionary_len: u64 = 0,
+    dataStackLen: u64 = 0,
+    dataStack: []Value,
+    callStackLen: u64 = 0,
+    callStack: []u64,
+    dictionaryLen: u64 = 0,
     dictionary: []Definition,
     wp: u32 = 0,
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
-        const data_stack_ptr = try arena.alloc(Value, STACK_CAP);
-        @memset(data_stack_ptr, Value{ .int = 0 });
-        const call_stack_ptr = try arena.alloc(u64, STACK_CAP);
-        @memset(call_stack_ptr, 0);
-        const dictionary_ptr = try arena.alloc(Definition, STACK_CAP);
-        @memset(dictionary_ptr, .empty);
+        const dataStackPtr = try arena.alloc(Value, STACK_CAP);
+        @memset(dataStackPtr, Value{ .int = 0 });
+        const callStackPtr = try arena.alloc(u64, STACK_CAP);
+        @memset(callStackPtr, 0);
+        const dictionaryPtr = try arena.alloc(Definition, STACK_CAP);
+        @memset(dictionaryPtr, .empty);
         return .{
             .arena = arena,
-            .data_stack = data_stack_ptr,
-            .call_stack = call_stack_ptr,
-            .dictionary = dictionary_ptr,
+            .dataStack = dataStackPtr,
+            .callStack = callStackPtr,
+            .dictionary = dictionaryPtr,
         };
     }
 
     fn push(machine: *Machine, value: Value) void {
-        machine.data_stack_len += 1;
-        machine.data_stack[machine.data_stack_len - 1] = value;
+        machine.dataStackLen += 1;
+        machine.dataStack[machine.dataStackLen - 1] = value;
     }
 
     fn pop(machine: *Machine) Value {
         const top1 = machine.top();
-        machine.data_stack_len -= 1;
+        machine.dataStackLen -= 1;
         return top1;
     }
 
     fn top(machine: Machine) Value {
-        return machine.data_stack[machine.data_stack_len - 1];
+        return machine.dataStack[machine.dataStackLen - 1];
     }
 
     fn top2(machine: Machine) Value {
-        return machine.data_stack[machine.data_stack_len - 2];
+        return machine.dataStack[machine.dataStackLen - 2];
     }
 
     fn top3(machine: Machine) Value {
-        return machine.data_stack[machine.data_stack_len - 3];
+        return machine.dataStack[machine.dataStackLen - 3];
     }
 
-    fn dictionary_lookup(machine: Machine, name: []const u8) ?Definition {
+    fn dictionaryLookup(machine: Machine, name: []const u8) ?Definition {
         for (machine.dictionary) |def|
             if (mem.eql(u8, name, def.name))
                 return def;
         return null;
     }
 
-    fn push_definition(machine: *Machine, definition: Definition) u32 {
-        assert(machine.dictionary_len >= std.math.maxInt(u32), "dictionary overflow", .{});
-        machine.dictionaries[machine.dictionary_len] = definition;
-        const index = machine.dictionary_len;
-        machine.dictionary_len += 1;
+    fn pushDefinition(machine: *Machine, definition: Definition) u32 {
+        assert(machine.dictionaryLen >= std.math.maxInt(u32), "dictionary overflow", .{});
+        machine.dictionaries[machine.dictionaryLen] = definition;
+        const index = machine.dictionaryLen;
+        machine.dictionaryLen += 1;
         return index;
     }
 };
 
 const ErrorType = enum {
-    type_error,
+    typeError,
 };
-fn report_error(e: ErrorType) !void {
+fn reportError(e: ErrorType) !void {
     switch (e) {
-        .type_error => return error.TypeError,
+        .typeError => return error.TypeError,
     }
 }
 
-fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !void {
+fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void {
     switch (builtin) {
         .@"=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(Value.from_bool(meta.eql(arg1, arg2)));
+            machine.push(Value.fromBool(meta.eql(arg1, arg2)));
         },
 
         .@"!=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(Value.from_bool(!meta.eql(arg1, arg2)));
+            machine.push(Value.fromBool(!meta.eql(arg1, arg2)));
         },
 
         .@"<" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
-                .int => machine.push(Value.from_bool(arg1.int < arg2.int)),
-                .float => machine.push(Value.from_bool(arg1.float < arg2.float)),
-                else => try report_error(.type_error),
+                .int => machine.push(Value.fromBool(arg1.int < arg2.int)),
+                .float => machine.push(Value.fromBool(arg1.float < arg2.float)),
+                else => try reportError(.typeError),
             }
         },
 
         .@"<=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
-                .int => machine.push(Value.from_bool(arg1.int <= arg2.int)),
-                .float => machine.push(Value.from_bool(arg1.float <= arg2.float)),
-                else => try report_error(.type_error),
+                .int => machine.push(Value.fromBool(arg1.int <= arg2.int)),
+                .float => machine.push(Value.fromBool(arg1.float <= arg2.float)),
+                else => try reportError(.typeError),
             }
         },
 
         .@">" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
-                .int => machine.push(Value.from_bool(arg1.int > arg2.int)),
-                .float => machine.push(Value.from_bool(arg1.float > arg2.float)),
-                else => try report_error(.type_error),
+                .int => machine.push(Value.fromBool(arg1.int > arg2.int)),
+                .float => machine.push(Value.fromBool(arg1.float > arg2.float)),
+                else => try reportError(.typeError),
             }
         },
 
         .@">=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
-                .int => machine.push(Value.from_bool(arg1.int >= arg2.int)),
-                .float => machine.push(Value.from_bool(arg1.float >= arg2.float)),
-                else => try report_error(.type_error),
+                .int => machine.push(Value.fromBool(arg1.int >= arg2.int)),
+                .float => machine.push(Value.fromBool(arg1.float >= arg2.float)),
+                else => try reportError(.typeError),
             }
         },
 
         .@"+" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int + arg2.int }),
                 .float => machine.push(.{ .float = arg1.float + arg2.float }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"*" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int * arg2.int }),
                 .float => machine.push(.{ .float = arg1.float * arg2.float }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .xor => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int ^ arg2.int }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"or" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int | arg2.int }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"and" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int & arg2.int }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"-" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int - arg2.int }),
                 .float => machine.push(.{ .float = arg1.float - arg2.float }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"<<" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int << @intCast(arg2.int) }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@">>" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = arg1.int >> @intCast(arg2.int) }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"/" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = @divFloor(arg1.int, arg2.int) }),
                 .float => machine.push(.{ .float = arg1.float / arg2.float }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
         .@"%" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1) {
                 .int => machine.push(.{ .int = @mod(arg1.int, arg2.int) }),
                 .float => machine.push(.{ .float = @mod(arg1.float, arg2.float) }),
-                else => try report_error(.type_error),
+                else => try reportError(.typeError),
             }
         },
 
@@ -415,7 +415,7 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
         .@"." => {
             const top = machine.pop();
             top.print();
-            print_stderr(" ", .{});
+            printStderr(" ", .{});
         },
 
         // TODO: how do we pass the arguments?
@@ -429,8 +429,8 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
                 @memcpy(owned, entry.name);
                 array.append(.{ .string = owned }) catch oom();
             }
-            machine.data_stack_len += 1;
-            machine.data_stack[machine.data_stack_len - 1] = .{ .array = array.items };
+            machine.dataStackLen += 1;
+            machine.dataStack[machine.dataStackLen - 1] = .{ .array = array.items };
         },
     }
 }
@@ -442,24 +442,24 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
 
         switch (word) {
             .int => |num| {
-                machine.data_stack[machine.data_stack_len] = Value{ .int = num };
-                machine.data_stack_len += 1;
+                machine.dataStack[machine.dataStackLen] = Value{ .int = num };
+                machine.dataStackLen += 1;
             },
 
             .float => |num| {
-                machine.data_stack[machine.data_stack_len] = Value{ .float = num };
-                machine.data_stack_len += 1;
+                machine.dataStack[machine.dataStackLen] = Value{ .float = num };
+                machine.dataStackLen += 1;
             },
 
             .string => |str| {
-                machine.data_stack[machine.data_stack_len] = Value{ .string = str };
-                machine.data_stack_len += 1;
+                machine.dataStack[machine.dataStackLen] = Value{ .string = str };
+                machine.dataStackLen += 1;
             },
 
-            .builtin => |builtin| try interpret_builtin(arena, machine, builtin),
+            .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
 
             .identifier => |id| {
-                if (machine.dictionary_lookup(id)) |def| {
+                if (machine.dictionaryLookup(id)) |def| {
                     assert(false, "todo", .{});
                     _ = def;
                 }
@@ -507,13 +507,13 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
             words.append(arena, .{ .string = input[start..end] }) catch oom();
         } else {
             // Not a string, find the end of the word
-            const word_start = index;
+            const wordStart = index;
             while (index < input.len and
                 input[index] != ' ' and input[index] != '\n' and
                 input[index] != '\t' and input[index] != '"')
                 index += 1;
 
-            const word = input[word_start..index];
+            const word = input[wordStart..index];
 
             // Try to parse as int, float, or identifier
             if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
@@ -540,25 +540,25 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
-    var gpa_allocator = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
-    const arena_allocator = arena.allocator();
+    var gpaAllocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpaAllocator);
+    const arenaAllocator = arena.allocator();
     defer arena.deinit();
 
-    var args_iterator = process.argsWithAllocator(gpa_allocator) catch oom();
+    var argsIterator = process.argsWithAllocator(gpaAllocator) catch oom();
     // The first one is the binary name
-    _ = args_iterator.next();
-    const filename = args_iterator.next() orelse exit("provide the input file", .{});
-    const input = std.fs.cwd().readFileAlloc(gpa_allocator, filename, 4194304) catch |err| switch (err) {
+    _ = argsIterator.next();
+    const filename = argsIterator.next() orelse exit("provide the input file", .{});
+    const input = std.fs.cwd().readFileAlloc(gpaAllocator, filename, 4194304) catch |err| switch (err) {
         error.OutOfMemory => oom(),
         else => exit("Something is wrong with your file", .{}),
     };
-    defer gpa_allocator.free(input);
-    args_iterator.deinit();
+    defer gpaAllocator.free(input);
+    argsIterator.deinit();
 
-    const words = lex(arena_allocator, input);
-    var machine = Machine.init(arena_allocator);
-    try interpret(arena_allocator, &machine, words);
+    const words = lex(arenaAllocator, input);
+    var machine = Machine.init(arenaAllocator);
+    try interpret(arenaAllocator, &machine, words);
 }
 
 test "lex integers" {
