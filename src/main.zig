@@ -42,6 +42,10 @@ const Value = union(enum) {
         return if (b) .{ .int = 1 } else .{ .int = 0 };
     }
 
+    fn same_tag(this: Value, other: Value) bool {
+        return meta.activeTag(this) == meta.activeTag(other);
+    }
+
     fn print(value: Value) void {
         switch (value) {
             .int => print_stderr("{d}", .{value.int}),
@@ -185,8 +189,13 @@ const Machine = struct {
     }
 };
 
-fn report_error() !void {
-    return error.InterpretationErrror;
+const ErrorType = enum {
+    type_error,
+};
+fn report_error(e: ErrorType) !void {
+    switch (e) {
+        .type_error => return error.TypeError,
+    }
 }
 
 fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !void {
@@ -206,102 +215,151 @@ fn interpret_builtin(arena: Allocator, machine: *Machine, builtin: Builtin) !voi
         .@"<" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
             switch (arg1) {
-                .int => {
-                    switch (arg2) {
-                        .int => machine.push(Value.from_bool(arg1.int < arg2.int)),
-                        else => try report_error(),
-                    }
-                },
-                .float => {
-                    switch (arg2) {
-                        .float => machine.push(Value.from_bool(arg1.float < arg2.float)),
-                        else => try report_error(),
-                    }
-                },
-                else => try report_error(),
+                .int => machine.push(Value.from_bool(arg1.int < arg2.int)),
+                .float => machine.push(Value.from_bool(arg1.float < arg2.float)),
+                else => try report_error(.type_error),
             }
         },
 
         .@"<=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
             switch (arg1) {
-                .int => {
-                    switch (arg2) {
-                        .int => machine.push(Value.from_bool(arg1.int <= arg2.int)),
-                        else => try report_error(),
-                    }
-                },
-                .float => {
-                    switch (arg2) {
-                        .float => machine.push(Value.from_bool(arg1.float <= arg2.float)),
-                        else => try report_error(),
-                    }
-                },
-                else => try report_error(),
+                .int => machine.push(Value.from_bool(arg1.int <= arg2.int)),
+                .float => machine.push(Value.from_bool(arg1.float <= arg2.float)),
+                else => try report_error(.type_error),
             }
         },
 
         .@">" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
             switch (arg1) {
-                .int => {
-                    switch (arg2) {
-                        .int => machine.push(Value.from_bool(arg1.int > arg2.int)),
-                        else => try report_error(),
-                    }
-                },
-                .float => {
-                    switch (arg2) {
-                        .float => machine.push(Value.from_bool(arg1.float > arg2.float)),
-                        else => try report_error(),
-                    }
-                },
-                else => try report_error(),
+                .int => machine.push(Value.from_bool(arg1.int > arg2.int)),
+                .float => machine.push(Value.from_bool(arg1.float > arg2.float)),
+                else => try report_error(.type_error),
             }
         },
 
         .@">=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
             switch (arg1) {
-                .int => {
-                    switch (arg2) {
-                        .int => machine.push(Value.from_bool(arg1.int >= arg2.int)),
-                        else => try report_error(),
-                    }
-                },
-                .float => {
-                    switch (arg2) {
-                        .float => machine.push(Value.from_bool(arg1.float >= arg2.float)),
-                        else => try report_error(),
-                    }
-                },
-                else => try report_error(),
+                .int => machine.push(Value.from_bool(arg1.int >= arg2.int)),
+                .float => machine.push(Value.from_bool(arg1.float >= arg2.float)),
+                else => try report_error(.type_error),
             }
         },
 
-        .@"+" => {},
+        .@"+" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int + arg2.int }),
+                .float => machine.push(.{ .float = arg1.float + arg2.float }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"*" => {},
+        .@"*" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int * arg2.int }),
+                .float => machine.push(.{ .float = arg1.float * arg2.float }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .xor => {},
+        .xor => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int ^ arg2.int }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"or" => {},
+        .@"or" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int | arg2.int }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"and" => {},
+        .@"and" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int & arg2.int }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"-" => {},
+        .@"-" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int - arg2.int }),
+                .float => machine.push(.{ .float = arg1.float - arg2.float }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"<<" => {},
+        .@"<<" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int << @intCast(arg2.int) }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@">>" => {},
+        .@">>" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = arg1.int >> @intCast(arg2.int) }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"/" => {},
+        .@"/" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = @divFloor(arg1.int, arg2.int) }),
+                .float => machine.push(.{ .float = arg1.float / arg2.float }),
+                else => try report_error(.type_error),
+            }
+        },
 
-        .@"%" => {},
+        .@"%" => {
+            const arg2 = machine.pop();
+            const arg1 = machine.pop();
+            if (!arg1.same_tag(arg2)) try report_error(.type_error);
+            switch (arg1) {
+                .int => machine.push(.{ .int = @mod(arg1.int, arg2.int) }),
+                .float => machine.push(.{ .float = @mod(arg1.float, arg2.float) }),
+                else => try report_error(.type_error),
+            }
+        },
 
         .swap => {
             const top = machine.pop();
