@@ -437,25 +437,12 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
 
 // TODO: memory management, some other time
 fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
+    // TODO: labeled switch
     while (true) {
-        const word = words[machine.wp];
-
-        switch (word) {
-            .int => |num| {
-                machine.dataStack[machine.dataStackLen] = Value{ .int = num };
-                machine.dataStackLen += 1;
-            },
-
-            .float => |num| {
-                machine.dataStack[machine.dataStackLen] = Value{ .float = num };
-                machine.dataStackLen += 1;
-            },
-
-            .string => |str| {
-                machine.dataStack[machine.dataStackLen] = Value{ .string = str };
-                machine.dataStackLen += 1;
-            },
-
+        switch (words[machine.wp]) {
+            .int => |num| machine.push(.{ .int = num }),
+            .float => |num| machine.push(.{ .float = num }),
+            .string => |str| machine.push(.{ .string = str }),
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
 
             .identifier => |id| {
