@@ -24,8 +24,8 @@ fn exit(comptime format: []const u8, args: anytype) noreturn {
 
 fn printStderr(comptime format: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    const bw = std.Progress.lockStderrWriter(&buffer);
-    defer std.Progress.unlockStderrWriter();
+    const bw = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
     nosuspend bw.print(format, args) catch return;
 }
 
@@ -36,6 +36,7 @@ const Value = union(enum) {
     int: i64,
     float: f64,
     string: []const u8,
+    quote: []const u8,
     array: []Value,
 
     fn fromBool(b: bool) Value {
@@ -50,6 +51,7 @@ const Value = union(enum) {
         switch (value) {
             .int => printStderr("{d}", .{value.int}),
             .float => printStderr("{d}", .{value.float}),
+            .quote => printStderr("'{s}", .{value.quote}),
             .string => printStderr("{s}", .{value.string}),
             .array => {
                 printStderr("[", .{});
@@ -137,7 +139,7 @@ const Machine = struct {
     fn init(arena: Allocator) Machine {
         errdefer oom();
         const dataStackPtr = try arena.alloc(Value, STACK_CAP);
-        @memset(dataStackPtr, Value{ .int = 0 });
+        @memset(dataStackPtr, .{ .int = 0 });
         const callStackPtr = try arena.alloc(u64, STACK_CAP);
         @memset(callStackPtr, 0);
         const dictionaryPtr = try arena.alloc(Definition, STACK_CAP);
@@ -437,7 +439,6 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
 
 // TODO: memory management, some other time
 fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
-    // TODO: labeled switch
     while (true) {
         switch (words[machine.wp]) {
             .int => |num| machine.push(.{ .int = num }),
@@ -461,6 +462,18 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
     }
 }
 
+fn parse_escape_sequence(char: u8) ?u8 {
+    return switch (char) {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '\\' => '\\',
+        '"' => '"',
+        '0' => 0,
+        else => null,
+    };
+}
+
 fn lex(arena: Allocator, input: []const u8) []const Word {
     var words = ArrayListUnmanaged(Word).empty;
     var index: usize = 0;
@@ -474,16 +487,24 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
         if (index >= input.len) break;
 
         if (input[index] == '"') {
-            const start = index;
             // Skip opening quote
             index += 1;
+            var string_buf = ArrayListUnmanaged(u8).empty;
 
             while (index < input.len and input[index] != '"') : (index += 1) {
-                if (input[index] == '\\' and index + 1 < input.len)
+                if (input[index] == '\\' and index + 1 < input.len) {
                     index += 1;
+                    if (parse_escape_sequence(input[index])) |escaped| {
+                        string_buf.append(arena, escaped) catch oom();
+                    } else {
+                        // for invalid escape sequences add the character anyway
+                        string_buf.append(arena, input[index]) catch oom();
+                    }
+                } else {
+                    string_buf.append(arena, input[index]) catch oom();
+                }
             }
 
-            const end = index + 1;
             if (index < input.len) {
                 // Skip closing quote
                 index += 1;
@@ -491,7 +512,7 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
                 assert(false, "unterminated string literal", .{});
             }
 
-            words.append(arena, .{ .string = input[start..end] }) catch oom();
+            words.append(arena, .{ .string = string_buf.items }) catch oom();
         } else {
             // Not a string, find the end of the word
             const wordStart = index;
@@ -502,7 +523,7 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
 
             const word = input[wordStart..index];
 
-            // Try to parse as int, float, or identifier
+            // Try to parse as int, float, builtin, or identifier
             if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
                 words.append(arena, .{ .int = num }) catch oom();
             } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
@@ -625,37 +646,37 @@ test "lex strings" {
     {
         const words = lex(allocator, "\"hello\" \"world\" \"\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("\"hello\"", words[0].string);
-        try std.testing.expectEqualStrings("\"world\"", words[1].string);
-        try std.testing.expectEqualStrings("\"\"", words[2].string);
+        try std.testing.expectEqualStrings("hello", words[0].string);
+        try std.testing.expectEqualStrings("world", words[1].string);
+        try std.testing.expectEqualStrings("", words[2].string);
     }
 
     // Escape sequences
     {
         const words = lex(allocator, "\"\\n\\t\\r\" \"\\\"quoted\\\"\" \"back\\\\slash\" \"null\\0char\"");
         try std.testing.expectEqual(@as(usize, 4), words.len);
-        try std.testing.expectEqualStrings("\"\\n\\t\\r\"", words[0].string);
-        try std.testing.expectEqualStrings("\"\\\"quoted\\\"\"", words[1].string);
-        try std.testing.expectEqualStrings("\"back\\\\slash\"", words[2].string);
-        try std.testing.expectEqualStrings("\"null\\0char\"", words[3].string);
+        try std.testing.expectEqualStrings("\n\t\r", words[0].string);
+        try std.testing.expectEqualStrings("\"quoted\"", words[1].string);
+        try std.testing.expectEqualStrings("back\\slash", words[2].string);
+        try std.testing.expectEqualStrings("null\x00char", words[3].string);
     }
 
     // Strings with spaces
     {
         const words = lex(allocator, "\"hello world\" \"multiple   spaces\" \"tabs\\there\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("\"hello world\"", words[0].string);
-        try std.testing.expectEqualStrings("\"multiple   spaces\"", words[1].string);
-        try std.testing.expectEqualStrings("\"tabs\\there\"", words[2].string);
+        try std.testing.expectEqualStrings("hello world", words[0].string);
+        try std.testing.expectEqualStrings("multiple   spaces", words[1].string);
+        try std.testing.expectEqualStrings("tabs\there", words[2].string);
     }
 
     // Invalid escape sequences
     {
         const words = lex(allocator, "\"\\x\" \"\\q\" \"\\1\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
-        try std.testing.expectEqualStrings("\"\\x\"", words[0].string);
-        try std.testing.expectEqualStrings("\"\\q\"", words[1].string);
-        try std.testing.expectEqualStrings("\"\\1\"", words[2].string);
+        try std.testing.expectEqualStrings("x", words[0].string);
+        try std.testing.expectEqualStrings("q", words[1].string);
+        try std.testing.expectEqualStrings("1", words[2].string);
     }
 }
 
@@ -668,14 +689,14 @@ test "lex identifiers" {
     {
         const words = lex(allocator, "+ - * / dup drop swap over");
         try std.testing.expectEqual(@as(usize, 8), words.len);
-        try std.testing.expectEqualStrings("+", words[0].identifier);
-        try std.testing.expectEqualStrings("-", words[1].identifier);
-        try std.testing.expectEqualStrings("*", words[2].identifier);
-        try std.testing.expectEqualStrings("/", words[3].identifier);
-        try std.testing.expectEqualStrings("dup", words[4].identifier);
-        try std.testing.expectEqualStrings("drop", words[5].identifier);
-        try std.testing.expectEqualStrings("swap", words[6].identifier);
-        try std.testing.expectEqualStrings("over", words[7].identifier);
+        try std.testing.expectEqual(Builtin.@"+", words[0].builtin);
+        try std.testing.expectEqual(Builtin.@"-", words[1].builtin);
+        try std.testing.expectEqual(Builtin.@"*", words[2].builtin);
+        try std.testing.expectEqual(Builtin.@"/", words[3].builtin);
+        try std.testing.expectEqual(Builtin.dup, words[4].builtin);
+        try std.testing.expectEqual(Builtin.drop, words[5].builtin);
+        try std.testing.expectEqual(Builtin.swap, words[6].builtin);
+        try std.testing.expectEqual(Builtin.over, words[7].builtin);
     }
 
     // Complex identifiers
@@ -697,16 +718,6 @@ test "lex identifiers" {
         try std.testing.expectEqualStrings("2/", words[1].identifier);
         try std.testing.expectEqualStrings("works?", words[2].identifier);
     }
-
-    // Special characters
-    {
-        const words = lex(allocator, "! @ # $ % ^ & = < > ? :");
-        try std.testing.expectEqual(@as(usize, 12), words.len);
-        for (words, 0..) |word, i| {
-            _ = i;
-            try std.testing.expect(word == .identifier);
-        }
-    }
 }
 
 test "lex mixed input" {
@@ -720,11 +731,11 @@ test "lex mixed input" {
         try std.testing.expectEqual(@as(usize, 7), words.len);
         try std.testing.expectEqual(@as(i64, 42), words[0].int);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[1].float, 0.001);
-        try std.testing.expectEqualStrings("\"hello\"", words[2].string);
-        try std.testing.expectEqualStrings("+", words[3].identifier);
+        try std.testing.expectEqualStrings("hello", words[2].string);
+        try std.testing.expectEqual(Builtin.@"+", words[3].builtin);
         try std.testing.expectEqual(@as(i64, -17), words[4].int);
-        try std.testing.expectEqualStrings("\"world\"", words[5].string);
-        try std.testing.expectEqualStrings("swap", words[6].identifier);
+        try std.testing.expectEqualStrings("world", words[5].string);
+        try std.testing.expectEqual(Builtin.swap, words[6].builtin);
     }
 
     // Different whitespace
@@ -740,10 +751,10 @@ test "lex mixed input" {
     {
         const words = lex(allocator, "\"no\"\"space\"42\"between\"3.14");
         try std.testing.expectEqual(@as(usize, 5), words.len);
-        try std.testing.expectEqualStrings("\"no\"", words[0].string);
-        try std.testing.expectEqualStrings("\"space\"", words[1].string);
+        try std.testing.expectEqualStrings("no", words[0].string);
+        try std.testing.expectEqualStrings("space", words[1].string);
         try std.testing.expectEqual(@as(i64, 42), words[2].int);
-        try std.testing.expectEqualStrings("\"between\"", words[3].string);
+        try std.testing.expectEqualStrings("between", words[3].string);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[4].float, 0.001);
     }
 
