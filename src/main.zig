@@ -36,7 +36,7 @@ const Value = union(enum) {
     int: i64,
     float: f64,
     string: []const u8,
-    quote: []const u8,
+    identifier: []const u8,
     array: []Value,
 
     fn fromBool(b: bool) Value {
@@ -51,7 +51,7 @@ const Value = union(enum) {
         switch (value) {
             .int => printStderr("{d}", .{value.int}),
             .float => printStderr("{d}", .{value.float}),
-            .quote => printStderr("'{s}", .{value.quote}),
+            .identifier => printStderr("'{s}", .{value.identifier}),
             .string => printStderr("{s}", .{value.string}),
             .array => {
                 printStderr("[", .{});
@@ -513,6 +513,15 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
             }
 
             words.append(arena, .{ .string = string_buf.items }) catch oom();
+        } else if (input[index] == '\'') {
+            // Skip the quote
+            index += 1;
+            const wordStart = index;
+            while (index < input.len and input[index] != ' ' and input[index] != '\n' and
+                input[index] != '\t')
+                index += 1;
+            const word = input[wordStart..index];
+            words.append(arena, .{ .identifier = word }) catch oom();
         } else {
             // Not a string, find the end of the word
             const wordStart = index;
@@ -720,6 +729,18 @@ test "lex identifiers" {
     }
 }
 
+test "lex quotes" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    {
+        const words = lex(allocator, "'test");
+        try std.testing.expectEqual(@as(usize, 1), words.len);
+        try std.testing.expectEqualStrings("test", words[0].identifier);
+    }
+}
+
 test "lex mixed input" {
     var arena = ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -727,8 +748,8 @@ test "lex mixed input" {
 
     // Mixed types
     {
-        const words = lex(allocator, "42 3.14 \"hello\" + -17 \"world\" swap");
-        try std.testing.expectEqual(@as(usize, 7), words.len);
+        const words = lex(allocator, "42 3.14 \"hello\" + -17 \"world\" swap 'swap");
+        try std.testing.expectEqual(@as(usize, 8), words.len);
         try std.testing.expectEqual(@as(i64, 42), words[0].int);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[1].float, 0.001);
         try std.testing.expectEqualStrings("hello", words[2].string);
@@ -736,6 +757,7 @@ test "lex mixed input" {
         try std.testing.expectEqual(@as(i64, -17), words[4].int);
         try std.testing.expectEqualStrings("world", words[5].string);
         try std.testing.expectEqual(Builtin.swap, words[6].builtin);
+        try std.testing.expectEqualStrings("swap", words[7].identifier);
     }
 
     // Different whitespace
