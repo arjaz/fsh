@@ -102,6 +102,7 @@ const Builtin = enum {
     @".x",
     // OS interactions
     ls,
+    sh,
 };
 
 const Word = union(enum) {
@@ -109,6 +110,7 @@ const Word = union(enum) {
     float: f64,
     string: []const u8,
     identifier: []const u8,
+    quoted: []const u8,
     builtin: Builtin,
 
     fn print(word: Word) void {
@@ -116,7 +118,8 @@ const Word = union(enum) {
             .int => printStderr("{d} ", .{word.int}),
             .float => printStderr("{d} ", .{word.float}),
             .string => printStderr("{s} ", .{word.string}),
-            .identifier => printStderr("'{s} ", .{word.identifier}),
+            .identifier => printStderr("{s} ", .{word.identifier}),
+            .quoted => printStderr("'{s} ", .{word.quoted}),
         }
     }
 };
@@ -194,12 +197,12 @@ const Machine = struct {
     }
 };
 
-const ErrorType = enum {
-    typeError,
-};
+const ErrorType = enum { typeError, todo, undefined };
 fn reportError(e: ErrorType) !void {
     switch (e) {
         .typeError => return error.TypeError,
+        .todo => return error.Todo,
+        .undefined => return error.Undefined,
     }
 }
 
@@ -447,7 +450,6 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             }
         },
 
-        // TODO: how do we pass the arguments?
         .ls => {
             var array = ArrayList(Value).init(arena);
             var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
@@ -461,6 +463,16 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             machine.dataStackLen += 1;
             machine.dataStack[machine.dataStackLen - 1] = .{ .array = array.items };
         },
+
+        .sh => {
+            // todo: capture stdout/stderr?
+            const top = machine.pop();
+            switch (top) {
+                .identifier => process.execv(arena, &.{top.identifier}) catch {},
+                .array => try reportError(.todo),
+                else => try reportError(.typeError),
+            }
+        },
     }
 }
 
@@ -471,16 +483,13 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
             .int => |num| machine.push(.{ .int = num }),
             .float => |num| machine.push(.{ .float = num }),
             .string => |str| machine.push(.{ .string = str }),
+            .quoted => |quoted| machine.push(.{ .identifier = quoted }),
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
-
             .identifier => |id| {
                 if (machine.dictionaryLookup(id)) |def| {
                     assert(false, "todo", .{});
                     _ = def;
-                }
-                // if not in dictionary, try to execute as a command
-                // TODO: how do we pass the arguments?
-                else process.execv(arena, &.{id}) catch {};
+                } else try reportError(.undefined);
             },
         }
 
@@ -548,7 +557,7 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
                 input[index] != '\t')
                 index += 1;
             const word = input[wordStart..index];
-            words.append(arena, .{ .identifier = word }) catch oom();
+            words.append(arena, .{ .quoted = word }) catch oom();
         } else {
             // Not a string, find the end of the word
             const wordStart = index;
@@ -764,7 +773,7 @@ test "lex quotes" {
     {
         const words = lex(allocator, "'test");
         try std.testing.expectEqual(@as(usize, 1), words.len);
-        try std.testing.expectEqualStrings("test", words[0].identifier);
+        try std.testing.expectEqualStrings("test", words[0].quoted);
     }
 }
 
@@ -784,7 +793,7 @@ test "lex mixed input" {
         try std.testing.expectEqual(@as(i64, -17), words[4].int);
         try std.testing.expectEqualStrings("world", words[5].string);
         try std.testing.expectEqual(Builtin.swap, words[6].builtin);
-        try std.testing.expectEqualStrings("swap", words[7].identifier);
+        try std.testing.expectEqualStrings("swap", words[7].quoted);
     }
 
     // Different whitespace
