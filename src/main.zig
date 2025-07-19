@@ -97,6 +97,9 @@ const Builtin = enum {
     tuck,
     // printing
     @".",
+    @".b",
+    @".o",
+    @".x",
     // OS interactions
     ls,
 };
@@ -418,6 +421,30 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const top = machine.pop();
             top.print();
             printStderr(" ", .{});
+        },
+
+        .@".b" => {
+            const top = machine.pop();
+            switch (top) {
+                .int => printStderr("{b} ", .{top.int}),
+                else => try reportError(.typeError),
+            }
+        },
+
+        .@".o" => {
+            const top = machine.pop();
+            switch (top) {
+                .int => printStderr("{o} ", .{top.int}),
+                else => try reportError(.typeError),
+            }
+        },
+
+        .@".x" => {
+            const top = machine.pop();
+            switch (top) {
+                .int => printStderr("{x} ", .{top.int}),
+                else => try reportError(.typeError),
+            }
         },
 
         // TODO: how do we pass the arguments?
