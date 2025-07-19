@@ -1,32 +1,25 @@
-const std = @import("std");
-const meta = std.meta;
-const process = std.process;
-const mem = std.mem;
-const Allocator = std.mem.Allocator;
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
-const ArrayList = std.ArrayList;
-const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
-const ArenaAllocator = std.heap.ArenaAllocator;
-const StaticStringMap = std.StaticStringMap;
+pub fn main() !void {
+    var gpa = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa.deinit();
+    var gpaAllocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpaAllocator);
+    const arenaAllocator = arena.allocator();
+    defer arena.deinit();
 
-fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
-    if (!condition) std.debug.panic(format ++ "\n", args);
-}
+    var argsIterator = process.argsWithAllocator(gpaAllocator) catch oom();
+    // The first one is the binary name
+    _ = argsIterator.next();
+    const filename = argsIterator.next() orelse exit("provide the input file", .{});
+    const input = std.fs.cwd().readFileAlloc(gpaAllocator, filename, 4194304) catch |err| switch (err) {
+        error.OutOfMemory => oom(),
+        else => exit("Something is wrong with your file", .{}),
+    };
+    defer gpaAllocator.free(input);
+    argsIterator.deinit();
 
-fn oom() noreturn {
-    std.debug.panic("OOM\n", .{});
-}
-
-fn exit(comptime format: []const u8, args: anytype) noreturn {
-    std.debug.print(format ++ "\n", args);
-    process.exit(1);
-}
-
-fn printStderr(comptime format: []const u8, args: anytype) void {
-    var buffer: [64]u8 = undefined;
-    const bw = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
-    nosuspend bw.print(format, args) catch return;
+    const words = lex(arenaAllocator, input);
+    var machine = Machine.init(arenaAllocator);
+    try interpret(arenaAllocator, &machine, words);
 }
 
 const STACK_CAP = 2 << 16;
@@ -103,6 +96,10 @@ const Builtin = enum {
     // OS interactions
     ls,
     sh,
+    // last stdout
+    // stdout,
+    // last stderr
+    // stderr,
 };
 
 const Word = union(enum) {
@@ -110,6 +107,7 @@ const Word = union(enum) {
     float: f64,
     string: []const u8,
     identifier: []const u8,
+    // TODO: quoted: Word
     quoted: []const u8,
     builtin: Builtin,
 
@@ -590,28 +588,24 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
     return words.toOwnedSlice(arena) catch oom();
 }
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
-    var gpaAllocator = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(gpaAllocator);
-    const arenaAllocator = arena.allocator();
-    defer arena.deinit();
+fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
+    if (!condition) std.debug.panic(format ++ "\n", args);
+}
 
-    var argsIterator = process.argsWithAllocator(gpaAllocator) catch oom();
-    // The first one is the binary name
-    _ = argsIterator.next();
-    const filename = argsIterator.next() orelse exit("provide the input file", .{});
-    const input = std.fs.cwd().readFileAlloc(gpaAllocator, filename, 4194304) catch |err| switch (err) {
-        error.OutOfMemory => oom(),
-        else => exit("Something is wrong with your file", .{}),
-    };
-    defer gpaAllocator.free(input);
-    argsIterator.deinit();
+fn oom() noreturn {
+    std.debug.panic("OOM\n", .{});
+}
 
-    const words = lex(arenaAllocator, input);
-    var machine = Machine.init(arenaAllocator);
-    try interpret(arenaAllocator, &machine, words);
+fn exit(comptime format: []const u8, args: anytype) noreturn {
+    std.debug.print(format ++ "\n", args);
+    process.exit(1);
+}
+
+fn printStderr(comptime format: []const u8, args: anytype) void {
+    var buffer: [64]u8 = undefined;
+    const bw = std.debug.lockStderrWriter(&buffer);
+    defer std.debug.unlockStderrWriter();
+    nosuspend bw.print(format, args) catch return;
 }
 
 test "lex integers" {
@@ -828,3 +822,14 @@ test "lex mixed input" {
         try std.testing.expectEqual(@as(usize, 0), words.len);
     }
 }
+
+const std = @import("std");
+const meta = std.meta;
+const process = std.process;
+const mem = std.mem;
+const Allocator = std.mem.Allocator;
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
+const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
+const StaticStringMap = std.StaticStringMap;
