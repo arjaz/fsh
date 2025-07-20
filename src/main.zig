@@ -10,7 +10,14 @@ pub fn main() !void {
     // The first one is the binary name
     _ = argsIterator.next();
     const filename = argsIterator.next() orelse exit("provide the input file", .{});
-    const input = std.fs.cwd().readFileAlloc(gpaAllocator, filename, 4194304) catch |err| switch (err) {
+    const input = std.fs.cwd().readFileAllocOptions(
+        gpaAllocator,
+        filename,
+        4194304,
+        null,
+        .of(u8),
+        0,
+    ) catch |err| switch (err) {
         error.OutOfMemory => oom(),
         else => exit("Something is wrong with your file", .{}),
     };
@@ -508,7 +515,7 @@ fn parse_escape_sequence(char: u8) ?u8 {
     };
 }
 
-fn lex(arena: Allocator, input: []const u8) []const Word {
+fn lex(arena: Allocator, input: [:0]const u8) []const Word {
     var words = ArrayListUnmanaged(Word).empty;
     var index: usize = 0;
 
