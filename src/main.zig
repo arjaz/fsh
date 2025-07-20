@@ -546,7 +546,9 @@ fn lex(arena: Allocator, input: []const u8) []const Word {
                 assert(false, "unterminated string literal", .{});
             }
 
-            words.append(arena, .{ .string = string_buf.items }) catch oom();
+            words.append(arena, .{
+                .string = string_buf.toOwnedSlice(arena) catch oom(),
+            }) catch oom();
         } else if (input[index] == '\'') {
             // Skip the quote
             index += 1;
