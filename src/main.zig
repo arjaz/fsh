@@ -32,32 +32,59 @@ pub fn main() !void {
 const STACK_CAP = 2 << 16;
 
 // TODO: Refcount
-const Value = union(enum) {
-    int: i64,
-    float: f64,
-    string: []const u8,
-    identifier: []const u8,
-    array: []Value,
+
+const Value = struct {
+    payload: Inner,
+    // refcount: u64 = 0,
+
+    const Inner = union(enum) {
+        int: i64,
+        float: f64,
+        string: []const u8,
+        identifier: []const u8,
+        array: []Value,
+    };
+
+    fn fromInt(i: i64) Value {
+        return .{ .payload = .{ .int = i } };
+    }
+
+    fn fromFloat(f: f64) Value {
+        return .{ .payload = .{ .float = f } };
+    }
+
+    fn fromString(str: []const u8) Value {
+        return .{ .payload = .{ .string = str } };
+    }
+
+    fn fromIdentifier(identifier: []const u8) Value {
+        return .{ .payload = .{ .identifier = identifier } };
+    }
+
+    fn fromArray(values: []Value) Value {
+        return .{ .payload = .{ .array = values } };
+    }
 
     fn fromBool(b: bool) Value {
-        return if (b) .{ .int = 1 } else .{ .int = 0 };
+        // true == -1 because all 1s
+        return if (b) fromInt(-1) else fromInt(0);
     }
 
     fn sameTag(this: Value, other: Value) bool {
-        return meta.activeTag(this) == meta.activeTag(other);
+        return meta.activeTag(this.payload) == meta.activeTag(other.payload);
     }
 
     fn print(value: Value) void {
-        switch (value) {
-            .int => printStderr("{d}", .{value.int}),
-            .float => printStderr("{d}", .{value.float}),
-            .identifier => printStderr("'{s}", .{value.identifier}),
-            .string => printStderr("{s}", .{value.string}),
+        switch (value.payload) {
+            .int => printStderr("{d}", .{value.payload.int}),
+            .float => printStderr("{d}", .{value.payload.float}),
+            .identifier => printStderr("'{s}", .{value.payload.identifier}),
+            .string => printStderr("{s}", .{value.payload.string}),
             .array => {
                 printStderr("[", .{});
-                for (value.array, 0..) |v, i| {
+                for (value.payload.array, 0..) |v, i| {
                     v.print();
-                    if (i + 1 != value.array.len)
+                    if (i + 1 != value.payload.array.len)
                         printStderr(" ", .{});
                 }
                 printStderr("]", .{});
@@ -114,7 +141,6 @@ const Word = union(enum) {
     float: f64,
     string: []const u8,
     identifier: []const u8,
-    // TODO: quoted: Word
     quoted: []const u8,
     builtin: Builtin,
 
@@ -150,7 +176,7 @@ const Machine = struct {
     fn init(arena: Allocator) Machine {
         errdefer oom();
         const dataStackPtr = try arena.alloc(Value, STACK_CAP);
-        @memset(dataStackPtr, .{ .int = 0 });
+        @memset(dataStackPtr, .fromInt(0));
         const callStackPtr = try arena.alloc(u64, STACK_CAP);
         @memset(callStackPtr, 0);
         const dictionaryPtr = try arena.alloc(Definition, STACK_CAP);
@@ -229,9 +255,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(Value.fromBool(arg1.int < arg2.int)),
-                .float => machine.push(Value.fromBool(arg1.float < arg2.float)),
+            switch (arg1.payload) {
+                .int => machine.push(Value.fromBool(arg1.payload.int < arg2.payload.int)),
+                .float => machine.push(Value.fromBool(arg1.payload.float < arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -240,9 +266,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(Value.fromBool(arg1.int <= arg2.int)),
-                .float => machine.push(Value.fromBool(arg1.float <= arg2.float)),
+            switch (arg1.payload) {
+                .int => machine.push(Value.fromBool(arg1.payload.int <= arg2.payload.int)),
+                .float => machine.push(Value.fromBool(arg1.payload.float <= arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -251,9 +277,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(Value.fromBool(arg1.int > arg2.int)),
-                .float => machine.push(Value.fromBool(arg1.float > arg2.float)),
+            switch (arg1.payload) {
+                .int => machine.push(Value.fromBool(arg1.payload.int > arg2.payload.int)),
+                .float => machine.push(Value.fromBool(arg1.payload.float > arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -262,9 +288,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(Value.fromBool(arg1.int >= arg2.int)),
-                .float => machine.push(Value.fromBool(arg1.float >= arg2.float)),
+            switch (arg1.payload) {
+                .int => machine.push(Value.fromBool(arg1.payload.int >= arg2.payload.int)),
+                .float => machine.push(Value.fromBool(arg1.payload.float >= arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -273,9 +299,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int + arg2.int }),
-                .float => machine.push(.{ .float = arg1.float + arg2.float }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int + arg2.payload.int)),
+                .float => machine.push(.fromFloat(arg1.payload.float + arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -284,9 +310,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int * arg2.int }),
-                .float => machine.push(.{ .float = arg1.float * arg2.float }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int * arg2.payload.int)),
+                .float => machine.push(.fromFloat(arg1.payload.float * arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -295,8 +321,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int ^ arg2.int }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int ^ arg2.payload.int)),
                 else => try reportError(.typeError),
             }
         },
@@ -305,8 +331,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int | arg2.int }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int | arg2.payload.int)),
                 else => try reportError(.typeError),
             }
         },
@@ -315,8 +341,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int & arg2.int }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int & arg2.payload.int)),
                 else => try reportError(.typeError),
             }
         },
@@ -325,9 +351,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int - arg2.int }),
-                .float => machine.push(.{ .float = arg1.float - arg2.float }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int - arg2.payload.int)),
+                .float => machine.push(.fromFloat(arg1.payload.float - arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -336,8 +362,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int << @intCast(arg2.int) }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int << @intCast(arg2.payload.int))),
                 else => try reportError(.typeError),
             }
         },
@@ -346,8 +372,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = arg1.int >> @intCast(arg2.int) }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(arg1.payload.int >> @intCast(arg2.payload.int))),
                 else => try reportError(.typeError),
             }
         },
@@ -356,9 +382,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = @divFloor(arg1.int, arg2.int) }),
-                .float => machine.push(.{ .float = arg1.float / arg2.float }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(@divFloor(arg1.payload.int, arg2.payload.int))),
+                .float => machine.push(.fromFloat(arg1.payload.float / arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -367,9 +393,9 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg2 = machine.pop();
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
-            switch (arg1) {
-                .int => machine.push(.{ .int = @mod(arg1.int, arg2.int) }),
-                .float => machine.push(.{ .float = @mod(arg1.float, arg2.float) }),
+            switch (arg1.payload) {
+                .int => machine.push(.fromInt(@mod(arg1.payload.int, arg2.payload.int))),
+                .float => machine.push(.fromFloat(@mod(arg1.payload.float, arg2.payload.float))),
                 else => try reportError(.typeError),
             }
         },
@@ -433,24 +459,24 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
 
         .@".b" => {
             const top = machine.pop();
-            switch (top) {
-                .int => printStderr("{b} ", .{top.int}),
+            switch (top.payload) {
+                .int => printStderr("{b} ", .{top.payload.int}),
                 else => try reportError(.typeError),
             }
         },
 
         .@".o" => {
             const top = machine.pop();
-            switch (top) {
-                .int => printStderr("{o} ", .{top.int}),
+            switch (top.payload) {
+                .int => printStderr("{o} ", .{top.payload.int}),
                 else => try reportError(.typeError),
             }
         },
 
         .@".x" => {
             const top = machine.pop();
-            switch (top) {
-                .int => printStderr("{x} ", .{top.int}),
+            switch (top.payload) {
+                .int => printStderr("{x} ", .{top.payload.int}),
                 else => try reportError(.typeError),
             }
         },
@@ -463,17 +489,17 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             while (iterator.next() catch null) |entry| {
                 const owned = arena.alloc(u8, entry.name.len) catch oom();
                 @memcpy(owned, entry.name);
-                array.append(.{ .string = owned }) catch oom();
+                array.append(.fromString(owned)) catch oom();
             }
             machine.dataStackLen += 1;
-            machine.dataStack[machine.dataStackLen - 1] = .{ .array = array.items };
+            machine.dataStack[machine.dataStackLen - 1] = .fromArray(array.items);
         },
 
         .sh => {
-            // todo: capture stdout/stderr?
+            // TODO: capture stdout/stderr?
             const top = machine.pop();
-            switch (top) {
-                .identifier => process.execv(arena, &.{top.identifier}) catch {},
+            switch (top.payload) {
+                .identifier => process.execv(arena, &.{top.payload.identifier}) catch {},
                 .array => try reportError(.todo),
                 else => try reportError(.typeError),
             }
@@ -485,10 +511,10 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
 fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
     while (true) {
         switch (words[machine.wp]) {
-            .int => |num| machine.push(.{ .int = num }),
-            .float => |num| machine.push(.{ .float = num }),
-            .string => |str| machine.push(.{ .string = str }),
-            .quoted => |quoted| machine.push(.{ .identifier = quoted }),
+            .int => |num| machine.push(.fromInt(num)),
+            .float => |num| machine.push(.fromFloat(num)),
+            .string => |str| machine.push(.fromString(str)),
+            .quoted => |quoted| machine.push(.fromIdentifier(quoted)),
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
             .identifier => |id| {
                 if (machine.dictionaryLookup(id)) |def| {
