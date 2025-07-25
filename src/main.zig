@@ -499,7 +499,19 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             // TODO: capture stdout/stderr?
             const top = machine.pop();
             switch (top.payload) {
-                .identifier => process.execv(arena, &.{top.payload.identifier}) catch {},
+                .identifier => {
+                    const pid = posix.fork() catch exit("Fork failed", .{});
+                    if (pid == 0) {
+                        // child process
+                        process.execv(arena, &.{top.payload.identifier}) catch {};
+                    } else if (pid > 0) {
+                        // parent process
+                        // TODO: do something with the return code?
+                        _ = posix.waitpid(pid, 0);
+                    } else {
+                        exit("Fork failed", .{});
+                    }
+                },
                 .array => try reportError(.todo),
                 else => try reportError(.typeError),
             }
@@ -861,6 +873,7 @@ test "lex mixed input" {
 const std = @import("std");
 const meta = std.meta;
 const process = std.process;
+const posix = std.posix;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
