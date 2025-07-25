@@ -40,6 +40,7 @@ const Value = struct {
     const Inner = union(enum) {
         int: i64,
         float: f64,
+        char: u8,
         string: []const u8,
         identifier: []const u8,
         array: []Value,
@@ -51,6 +52,10 @@ const Value = struct {
 
     fn fromFloat(f: f64) Value {
         return .{ .payload = .{ .float = f } };
+    }
+
+    fn fromChar(c: u8) Value {
+        return .{ .payload = .{ .char = c } };
     }
 
     fn fromString(str: []const u8) Value {
@@ -78,6 +83,7 @@ const Value = struct {
         switch (value.payload) {
             .int => printStderr("{d}", .{value.payload.int}),
             .float => printStderr("{d}", .{value.payload.float}),
+            .char => printStderr("{d}", .{value.payload.char}),
             .identifier => printStderr("'{s}", .{value.payload.identifier}),
             .string => printStderr("{s}", .{value.payload.string}),
             .array => {
@@ -139,6 +145,7 @@ const Builtin = enum {
 const Word = union(enum) {
     int: i64,
     float: f64,
+    char: u8,
     string: []const u8,
     identifier: []const u8,
     quoted: []const u8,
@@ -148,6 +155,7 @@ const Word = union(enum) {
         switch (word) {
             .int => printStderr("{d} ", .{word.int}),
             .float => printStderr("{d} ", .{word.float}),
+            .char => printStderr("{}", .{word.arg}),
             .string => printStderr("{s} ", .{word.string}),
             .identifier => printStderr("{s} ", .{word.identifier}),
             .quoted => printStderr("'{s} ", .{word.quoted}),
@@ -525,6 +533,7 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
         switch (words[machine.wp]) {
             .int => |num| machine.push(.fromInt(num)),
             .float => |num| machine.push(.fromFloat(num)),
+            .char => |char| machine.push(.fromChar(char)),
             .string => |str| machine.push(.fromString(str)),
             .quoted => |quoted| machine.push(.fromIdentifier(quoted)),
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
@@ -565,7 +574,24 @@ fn lex(arena: Allocator, input: [:0]const u8) []const Word {
 
         if (index >= input.len) break;
 
-        if (input[index] == '"') {
+        if (input[index] == '\\') {
+            // Skip starting backslash
+            index += 1;
+            if (index < input.len and input[index] == '\'')
+                assert(false, "empty character literal", .{});
+            if (index < input.len and input[index] == '\\') {
+                index += 1;
+                if (parse_escape_sequence(input[index])) |escaped| {
+                    words.append(arena, .{ .char = escaped }) catch oom();
+                } else {
+                    // for invalid escape sequences add the character anyway
+                    words.append(arena, .{ .char = input[index] }) catch oom();
+                }
+            } else {
+                words.append(arena, .{ .char = input[index] }) catch oom();
+            }
+            index += 1;
+        } else if (input[index] == '"') {
             // Skip opening quote
             index += 1;
             var string_buf = ArrayListUnmanaged(u8).empty;
@@ -644,6 +670,7 @@ fn oom() noreturn {
 }
 
 fn exit(comptime format: []const u8, args: anytype) noreturn {
+    @branchHint(.cold);
     std.debug.print(format ++ "\n", args);
     process.exit(1);
 }
@@ -720,6 +747,30 @@ test "lex floats" {
         try std.testing.expectApproxEqAbs(@as(f64, 0.5), words[0].float, 0.001);
         try std.testing.expectApproxEqAbs(@as(f64, 0.0), words[1].float, 0.001);
         try std.testing.expectApproxEqAbs(@as(f64, 1.0), words[2].float, 0.001);
+    }
+}
+
+test "lex chars" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Basic chars
+    {
+        const words = lex(allocator, "\\a \\b \\c ");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqual('a', words[0].char);
+        try std.testing.expectEqual('b', words[1].char);
+        try std.testing.expectEqual('c', words[2].char);
+    }
+
+    // Escaped chars
+    {
+        const words = lex(allocator, "\\\\n \\\\t \\\\0");
+        try std.testing.expectEqual(@as(usize, 3), words.len);
+        try std.testing.expectEqual('\n', words[0].char);
+        try std.testing.expectEqual('\t', words[1].char);
+        try std.testing.expectEqual(0, words[2].char);
     }
 }
 
