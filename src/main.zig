@@ -1,17 +1,17 @@
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer _ = gpa.deinit();
-    var gpaAllocator = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(gpaAllocator);
-    const arenaAllocator = arena.allocator();
+    var gpa_allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    const arena_allocator = arena.allocator();
     defer arena.deinit();
 
-    var argsIterator = process.argsWithAllocator(gpaAllocator) catch oom();
+    var args_iterator = process.argsWithAllocator(gpa_allocator) catch oom();
     // The first one is the binary name
-    _ = argsIterator.next();
-    const filename = argsIterator.next() orelse exit("provide the input file", .{});
+    _ = args_iterator.next();
+    const filename = args_iterator.next() orelse exit("provide the input file", .{});
     const input = std.fs.cwd().readFileAllocOptions(
-        gpaAllocator,
+        gpa_allocator,
         filename,
         4194304,
         null,
@@ -21,12 +21,12 @@ pub fn main() !void {
         error.OutOfMemory => oom(),
         else => exit("Something is wrong with your file", .{}),
     };
-    defer gpaAllocator.free(input);
-    argsIterator.deinit();
+    defer gpa_allocator.free(input);
+    args_iterator.deinit();
 
-    const words = lex(arenaAllocator, input);
-    var machine = Machine.init(arenaAllocator);
-    try interpret(arenaAllocator, &machine, words);
+    const words = lex(arena_allocator, input);
+    var machine = Machine.init(arena_allocator);
+    try interpret(arena_allocator, &machine, words);
 }
 
 const STACK_CAP = 2 << 16;
@@ -167,57 +167,57 @@ const Definition = struct {
     const empty = Definition{};
 
     name: []const u8 = &.{},
-    codeLen: u8 = 0,
+    code_len: u8 = 0,
     code: [64]Word = .{Word{ .int = 0 }} ** 64,
 };
 
 const Machine = struct {
     arena: Allocator,
-    dataStackLen: u64 = 0,
-    dataStack: []Value,
-    callStackLen: u64 = 0,
-    callStack: []u64,
-    dictionaryLen: u64 = 0,
+    data_stack_len: u64 = 0,
+    data_stack: []Value,
+    call_stack_len: u64 = 0,
+    call_stack: []u64,
+    dictionary_len: u64 = 0,
     dictionary: []Definition,
     wp: u32 = 0,
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
-        const dataStackPtr = try arena.alloc(Value, STACK_CAP);
-        @memset(dataStackPtr, .fromInt(0));
-        const callStackPtr = try arena.alloc(u64, STACK_CAP);
-        @memset(callStackPtr, 0);
-        const dictionaryPtr = try arena.alloc(Definition, STACK_CAP);
-        @memset(dictionaryPtr, .empty);
+        const data_stack = try arena.alloc(Value, STACK_CAP);
+        @memset(data_stack, .fromInt(0));
+        const call_stack = try arena.alloc(u64, STACK_CAP);
+        @memset(call_stack, 0);
+        const dictionary = try arena.alloc(Definition, STACK_CAP);
+        @memset(dictionary, .empty);
         return .{
             .arena = arena,
-            .dataStack = dataStackPtr,
-            .callStack = callStackPtr,
-            .dictionary = dictionaryPtr,
+            .data_stack = data_stack,
+            .call_stack = call_stack,
+            .dictionary = dictionary,
         };
     }
 
     fn push(machine: *Machine, value: Value) void {
-        machine.dataStackLen += 1;
-        machine.dataStack[machine.dataStackLen - 1] = value;
+        machine.data_stack_len += 1;
+        machine.data_stack[machine.data_stack_len - 1] = value;
     }
 
     fn pop(machine: *Machine) Value {
         const top1 = machine.top();
-        machine.dataStackLen -= 1;
+        machine.data_stack_len -= 1;
         return top1;
     }
 
     fn top(machine: Machine) Value {
-        return machine.dataStack[machine.dataStackLen - 1];
+        return machine.data_stack[machine.data_stack_len - 1];
     }
 
     fn top2(machine: Machine) Value {
-        return machine.dataStack[machine.dataStackLen - 2];
+        return machine.data_stack[machine.data_stack_len - 2];
     }
 
     fn top3(machine: Machine) Value {
-        return machine.dataStack[machine.dataStackLen - 3];
+        return machine.data_stack[machine.data_stack_len - 3];
     }
 
     fn dictionaryLookup(machine: Machine, name: []const u8) ?Definition {
@@ -228,10 +228,10 @@ const Machine = struct {
     }
 
     fn pushDefinition(machine: *Machine, definition: Definition) u32 {
-        assert(machine.dictionaryLen >= std.math.maxInt(u32), "dictionary overflow", .{});
-        machine.dictionaries[machine.dictionaryLen] = definition;
-        const index = machine.dictionaryLen;
-        machine.dictionaryLen += 1;
+        assert(machine.dictionary_len >= std.math.maxInt(u32), "dictionary overflow", .{});
+        machine.dictionaries[machine.dictionary_len] = definition;
+        const index = machine.dictionary_len;
+        machine.dictionary_len += 1;
         return index;
     }
 };
@@ -499,8 +499,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
                 @memcpy(owned, entry.name);
                 array.append(.fromString(owned)) catch oom();
             }
-            machine.dataStackLen += 1;
-            machine.dataStack[machine.dataStackLen - 1] = .fromArray(array.items);
+            machine.data_stack_len += 1;
+            machine.data_stack[machine.data_stack_len - 1] = .fromArray(array.items);
         },
 
         .sh => {
@@ -623,21 +623,21 @@ fn lex(arena: Allocator, input: [:0]const u8) []const Word {
         } else if (input[index] == '\'') {
             // Skip the quote
             index += 1;
-            const wordStart = index;
+            const word_start = index;
             while (index < input.len and input[index] != ' ' and input[index] != '\n' and
                 input[index] != '\t')
                 index += 1;
-            const word = input[wordStart..index];
+            const word = input[word_start..index];
             words.append(arena, .{ .quoted = word }) catch oom();
         } else {
             // Not a string, find the end of the word
-            const wordStart = index;
+            const word_start = index;
             while (index < input.len and
                 input[index] != ' ' and input[index] != '\n' and
                 input[index] != '\t' and input[index] != '"')
                 index += 1;
 
-            const word = input[wordStart..index];
+            const word = input[word_start..index];
 
             // Try to parse as int, float, builtin, or identifier
             if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
