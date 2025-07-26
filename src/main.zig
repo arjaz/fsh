@@ -250,13 +250,13 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
         .@"=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(Value.fromBool(meta.eql(arg1, arg2)));
+            machine.push(.fromBool(meta.eql(arg1, arg2)));
         },
 
         .@"!=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            machine.push(Value.fromBool(!meta.eql(arg1, arg2)));
+            machine.push(.fromBool(!meta.eql(arg1, arg2)));
         },
 
         .@"<" => {
@@ -264,8 +264,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1.payload) {
-                .int => machine.push(Value.fromBool(arg1.payload.int < arg2.payload.int)),
-                .float => machine.push(Value.fromBool(arg1.payload.float < arg2.payload.float)),
+                .int => machine.push(.fromBool(arg1.payload.int < arg2.payload.int)),
+                .float => machine.push(.fromBool(arg1.payload.float < arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -275,8 +275,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1.payload) {
-                .int => machine.push(Value.fromBool(arg1.payload.int <= arg2.payload.int)),
-                .float => machine.push(Value.fromBool(arg1.payload.float <= arg2.payload.float)),
+                .int => machine.push(.fromBool(arg1.payload.int <= arg2.payload.int)),
+                .float => machine.push(.fromBool(arg1.payload.float <= arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -286,8 +286,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1.payload) {
-                .int => machine.push(Value.fromBool(arg1.payload.int > arg2.payload.int)),
-                .float => machine.push(Value.fromBool(arg1.payload.float > arg2.payload.float)),
+                .int => machine.push(.fromBool(arg1.payload.int > arg2.payload.int)),
+                .float => machine.push(.fromBool(arg1.payload.float > arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
@@ -297,8 +297,8 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             const arg1 = machine.pop();
             if (!arg1.sameTag(arg2)) try reportError(.typeError);
             switch (arg1.payload) {
-                .int => machine.push(Value.fromBool(arg1.payload.int >= arg2.payload.int)),
-                .float => machine.push(Value.fromBool(arg1.payload.float >= arg2.payload.float)),
+                .int => machine.push(.fromBool(arg1.payload.int >= arg2.payload.int)),
+                .float => machine.push(.fromBool(arg1.payload.float >= arg2.payload.float)),
                 else => try reportError(.typeError),
             }
         },
