@@ -1,1 +1,3 @@
-'ls sh 1 2 3 + * .x
+: square dup * ;
+
+0x000f square .x \\n .

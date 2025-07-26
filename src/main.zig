@@ -24,9 +24,10 @@ pub fn main() !void {
     defer gpa_allocator.free(input);
     args_iterator.deinit();
 
-    const words = lex(arena_allocator, input);
+    const words = try lex(arena_allocator, input);
     var machine = Machine.init(arena_allocator);
-    try interpret(arena_allocator, &machine, words);
+    machine.program = words;
+    try interpret(arena_allocator, &machine);
 }
 
 const STACK_CAP = 2 << 16;
@@ -83,7 +84,7 @@ const Value = struct {
         switch (value.payload) {
             .int => printStderr("{d}", .{value.payload.int}),
             .float => printStderr("{d}", .{value.payload.float}),
-            .char => printStderr("{d}", .{value.payload.char}),
+            .char => printStderr("{c}", .{value.payload.char}),
             .identifier => printStderr("'{s}", .{value.payload.identifier}),
             .string => printStderr("{s}", .{value.payload.string}),
             .array => {
@@ -133,6 +134,11 @@ const Builtin = enum {
     @".b",
     @".o",
     @".x",
+    @".s",
+    // dictionary manipulation
+    // load,
+    @":",
+    @";",
     // OS interactions
     ls,
     sh,
@@ -155,10 +161,11 @@ const Word = union(enum) {
         switch (word) {
             .int => printStderr("{d} ", .{word.int}),
             .float => printStderr("{d} ", .{word.float}),
-            .char => printStderr("{}", .{word.arg}),
+            .char => printStderr("{}", .{word.char}),
             .string => printStderr("{s} ", .{word.string}),
             .identifier => printStderr("{s} ", .{word.identifier}),
             .quoted => printStderr("'{s} ", .{word.quoted}),
+            .builtin => printStderr("{s}", .{@tagName(word.builtin)}),
         }
     }
 };
@@ -167,25 +174,25 @@ const Definition = struct {
     const empty = Definition{};
 
     name: []const u8 = &.{},
-    code_len: u8 = 0,
-    code: [64]Word = .{Word{ .int = 0 }} ** 64,
+    wp: u32 = 0,
 };
 
 const Machine = struct {
     arena: Allocator,
-    data_stack_len: u64 = 0,
+    data_stack_len: u32 = 0,
     data_stack: []Value,
-    call_stack_len: u64 = 0,
-    call_stack: []u64,
-    dictionary_len: u64 = 0,
+    call_stack_len: u32 = 0,
+    call_stack: []u32,
+    dictionary_len: u32 = 0,
     dictionary: []Definition,
     wp: u32 = 0,
+    program: []const Word = &.{},
 
     fn init(arena: Allocator) Machine {
         errdefer oom();
         const data_stack = try arena.alloc(Value, STACK_CAP);
         @memset(data_stack, .fromInt(0));
-        const call_stack = try arena.alloc(u64, STACK_CAP);
+        const call_stack = try arena.alloc(u32, STACK_CAP);
         @memset(call_stack, 0);
         const dictionary = try arena.alloc(Definition, STACK_CAP);
         @memset(dictionary, .empty);
@@ -221,7 +228,7 @@ const Machine = struct {
     }
 
     fn dictionaryLookup(machine: Machine, name: []const u8) ?Definition {
-        for (machine.dictionary) |def|
+        for (machine.dictionary[0..machine.dictionary_len]) |def|
             if (mem.eql(u8, name, def.name))
                 return def;
         return null;
@@ -236,12 +243,13 @@ const Machine = struct {
     }
 };
 
-const ErrorType = enum { typeError, todo, undefined };
+const ErrorType = enum { type_error, todo, undefined, syntax_error };
 fn reportError(e: ErrorType) !void {
     switch (e) {
-        .typeError => return error.TypeError,
+        .type_error => return error.TypeError,
         .todo => return error.Todo,
         .undefined => return error.Undefined,
+        .syntax_error => return error.SyntaxError,
     }
 }
 
@@ -262,149 +270,149 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
         .@"<" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromBool(arg1.payload.int < arg2.payload.int)),
                 .float => machine.push(.fromBool(arg1.payload.float < arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"<=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromBool(arg1.payload.int <= arg2.payload.int)),
                 .float => machine.push(.fromBool(arg1.payload.float <= arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@">" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromBool(arg1.payload.int > arg2.payload.int)),
                 .float => machine.push(.fromBool(arg1.payload.float > arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@">=" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromBool(arg1.payload.int >= arg2.payload.int)),
                 .float => machine.push(.fromBool(arg1.payload.float >= arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"+" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int + arg2.payload.int)),
                 .float => machine.push(.fromFloat(arg1.payload.float + arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"*" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int * arg2.payload.int)),
                 .float => machine.push(.fromFloat(arg1.payload.float * arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .xor => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int ^ arg2.payload.int)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"or" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int | arg2.payload.int)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"and" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int & arg2.payload.int)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"-" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int - arg2.payload.int)),
                 .float => machine.push(.fromFloat(arg1.payload.float - arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"<<" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int << @intCast(arg2.payload.int))),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@">>" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(arg1.payload.int >> @intCast(arg2.payload.int))),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"/" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(@divFloor(arg1.payload.int, arg2.payload.int))),
                 .float => machine.push(.fromFloat(arg1.payload.float / arg2.payload.float)),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
         .@"%" => {
             const arg2 = machine.pop();
             const arg1 = machine.pop();
-            if (!arg1.sameTag(arg2)) try reportError(.typeError);
+            if (!arg1.sameTag(arg2)) try reportError(.type_error);
             switch (arg1.payload) {
                 .int => machine.push(.fromInt(@mod(arg1.payload.int, arg2.payload.int))),
                 .float => machine.push(.fromFloat(@mod(arg1.payload.float, arg2.payload.float))),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
 
@@ -462,31 +470,56 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
         .@"." => {
             const top = machine.pop();
             top.print();
-            printStderr(" ", .{});
+            // printStderr(" ", .{});
         },
 
         .@".b" => {
             const top = machine.pop();
             switch (top.payload) {
-                .int => printStderr("{b} ", .{top.payload.int}),
-                else => try reportError(.typeError),
+                .int => printStderr("0b{b} ", .{top.payload.int}),
+                else => try reportError(.type_error),
             }
         },
 
         .@".o" => {
             const top = machine.pop();
             switch (top.payload) {
-                .int => printStderr("{o} ", .{top.payload.int}),
-                else => try reportError(.typeError),
+                .int => printStderr("0o{o} ", .{top.payload.int}),
+                else => try reportError(.type_error),
             }
         },
 
         .@".x" => {
             const top = machine.pop();
             switch (top.payload) {
-                .int => printStderr("{x} ", .{top.payload.int}),
-                else => try reportError(.typeError),
+                .int => printStderr("0x{x} ", .{top.payload.int}),
+                else => try reportError(.type_error),
             }
+        },
+
+        .@".s" => {
+            for (machine.data_stack[0..machine.data_stack_len], 0..) |v, i| {
+                printStderr("STACK[{}]: ", .{i});
+                v.print();
+                printStderr("\n", .{});
+            }
+        },
+
+        .@":" => {
+            var current_definition: Definition = .empty;
+            machine.wp += 1;
+            assert(machine.program[machine.wp] == .identifier, "Word name expected", .{});
+            current_definition.name = machine.program[machine.wp].identifier;
+            machine.wp += 1;
+            current_definition.wp = machine.wp;
+            while (!(machine.program[machine.wp] == .builtin and machine.program[machine.wp].builtin == .@";")) : (machine.wp += 1) {}
+            machine.dictionary[machine.dictionary_len] = current_definition;
+            machine.dictionary_len += 1;
+        },
+
+        .@";" => {
+            machine.wp = machine.call_stack[machine.call_stack_len - 1];
+            machine.call_stack_len -= 1;
         },
 
         .ls => {
@@ -521,16 +554,16 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
                     }
                 },
                 .array => try reportError(.todo),
-                else => try reportError(.typeError),
+                else => try reportError(.type_error),
             }
         },
     }
 }
 
 // TODO: memory management, some other time
-fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
+fn interpret(arena: Allocator, machine: *Machine) !void {
     while (true) {
-        switch (words[machine.wp]) {
+        switch (machine.program[machine.wp]) {
             .int => |num| machine.push(.fromInt(num)),
             .float => |num| machine.push(.fromFloat(num)),
             .char => |char| machine.push(.fromChar(char)),
@@ -539,14 +572,15 @@ fn interpret(arena: Allocator, machine: *Machine, words: []const Word) !void {
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
             .identifier => |id| {
                 if (machine.dictionaryLookup(id)) |def| {
-                    assert(false, "todo", .{});
-                    _ = def;
+                    machine.call_stack[machine.call_stack_len] = machine.wp;
+                    machine.call_stack_len += 1;
+                    machine.wp = def.wp - 1;
                 } else try reportError(.undefined);
             },
         }
 
         machine.wp += 1;
-        if (machine.wp >= words.len) break;
+        if (machine.wp >= machine.program.len) break;
     }
 }
 
@@ -562,7 +596,7 @@ fn parse_escape_sequence(char: u8) ?u8 {
     };
 }
 
-fn lex(arena: Allocator, input: [:0]const u8) []const Word {
+fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
     var words = ArrayListUnmanaged(Word).empty;
     var index: usize = 0;
 
@@ -578,7 +612,7 @@ fn lex(arena: Allocator, input: [:0]const u8) []const Word {
             // Skip starting backslash
             index += 1;
             if (index < input.len and input[index] == '\'')
-                assert(false, "empty character literal", .{});
+                try reportError(.syntax_error);
             if (index < input.len and input[index] == '\\') {
                 index += 1;
                 if (parse_escape_sequence(input[index])) |escaped| {
@@ -614,6 +648,7 @@ fn lex(arena: Allocator, input: [:0]const u8) []const Word {
                 // Skip closing quote
                 index += 1;
             } else {
+                try reportError(.syntax_error);
                 assert(false, "unterminated string literal", .{});
             }
 
@@ -689,7 +724,7 @@ test "lex integers" {
 
     // Basic integers
     {
-        const words = lex(allocator, "0 42 -17 +99");
+        const words = try lex(allocator, "0 42 -17 +99");
         try std.testing.expectEqual(@as(usize, 4), words.len);
         try std.testing.expectEqual(@as(i64, 0), words[0].int);
         try std.testing.expectEqual(@as(i64, 42), words[1].int);
@@ -699,7 +734,7 @@ test "lex integers" {
 
     // Different bases
     {
-        const words = lex(allocator, "0x1F 0xFF 0b1010 0o77");
+        const words = try lex(allocator, "0x1F 0xFF 0b1010 0o77");
         try std.testing.expectEqual(@as(usize, 4), words.len);
         try std.testing.expectEqual(@as(i64, 31), words[0].int);
         try std.testing.expectEqual(@as(i64, 255), words[1].int);
@@ -709,7 +744,7 @@ test "lex integers" {
 
     // Large numbers
     {
-        const words = lex(allocator, "9223372036854775807 -9223372036854775808");
+        const words = try lex(allocator, "9223372036854775807 -9223372036854775808");
         try std.testing.expectEqual(@as(usize, 2), words.len);
         try std.testing.expectEqual(@as(i64, std.math.maxInt(i64)), words[0].int);
         try std.testing.expectEqual(@as(i64, std.math.minInt(i64)), words[1].int);
@@ -723,7 +758,7 @@ test "lex floats" {
 
     // Basic floats
     {
-        const words = lex(allocator, "3.14 -2.5 0.0 +1.23");
+        const words = try lex(allocator, "3.14 -2.5 0.0 +1.23");
         try std.testing.expectEqual(@as(usize, 4), words.len);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[0].float, 0.001);
         try std.testing.expectApproxEqAbs(@as(f64, -2.5), words[1].float, 0.001);
@@ -733,7 +768,7 @@ test "lex floats" {
 
     // Scientific notation
     {
-        const words = lex(allocator, "1e10 1.5e-5 -3.14e+2");
+        const words = try lex(allocator, "1e10 1.5e-5 -3.14e+2");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectApproxEqAbs(@as(f64, 1e10), words[0].float, 0.001);
         try std.testing.expectApproxEqAbs(@as(f64, 1.5e-5), words[1].float, 0.001);
@@ -742,7 +777,7 @@ test "lex floats" {
 
     // Edge cases
     {
-        const words = lex(allocator, ".5 0. 1.");
+        const words = try lex(allocator, ".5 0. 1.");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectApproxEqAbs(@as(f64, 0.5), words[0].float, 0.001);
         try std.testing.expectApproxEqAbs(@as(f64, 0.0), words[1].float, 0.001);
@@ -757,7 +792,7 @@ test "lex chars" {
 
     // Basic chars
     {
-        const words = lex(allocator, "\\a \\b \\c ");
+        const words = try lex(allocator, "\\a \\b \\c ");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqual('a', words[0].char);
         try std.testing.expectEqual('b', words[1].char);
@@ -766,7 +801,7 @@ test "lex chars" {
 
     // Escaped chars
     {
-        const words = lex(allocator, "\\\\n \\\\t \\\\0");
+        const words = try lex(allocator, "\\\\n \\\\t \\\\0");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqual('\n', words[0].char);
         try std.testing.expectEqual('\t', words[1].char);
@@ -781,7 +816,7 @@ test "lex strings" {
 
     // Basic strings
     {
-        const words = lex(allocator, "\"hello\" \"world\" \"\"");
+        const words = try lex(allocator, "\"hello\" \"world\" \"\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqualStrings("hello", words[0].string);
         try std.testing.expectEqualStrings("world", words[1].string);
@@ -790,7 +825,7 @@ test "lex strings" {
 
     // Escape sequences
     {
-        const words = lex(allocator, "\"\\n\\t\\r\" \"\\\"quoted\\\"\" \"back\\\\slash\" \"null\\0char\"");
+        const words = try lex(allocator, "\"\\n\\t\\r\" \"\\\"quoted\\\"\" \"back\\\\slash\" \"null\\0char\"");
         try std.testing.expectEqual(@as(usize, 4), words.len);
         try std.testing.expectEqualStrings("\n\t\r", words[0].string);
         try std.testing.expectEqualStrings("\"quoted\"", words[1].string);
@@ -800,7 +835,7 @@ test "lex strings" {
 
     // Strings with spaces
     {
-        const words = lex(allocator, "\"hello world\" \"multiple   spaces\" \"tabs\\there\"");
+        const words = try lex(allocator, "\"hello world\" \"multiple   spaces\" \"tabs\\there\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqualStrings("hello world", words[0].string);
         try std.testing.expectEqualStrings("multiple   spaces", words[1].string);
@@ -809,7 +844,7 @@ test "lex strings" {
 
     // Invalid escape sequences
     {
-        const words = lex(allocator, "\"\\x\" \"\\q\" \"\\1\"");
+        const words = try lex(allocator, "\"\\x\" \"\\q\" \"\\1\"");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqualStrings("x", words[0].string);
         try std.testing.expectEqualStrings("q", words[1].string);
@@ -824,7 +859,7 @@ test "lex identifiers" {
 
     // Basic identifiers and operators
     {
-        const words = lex(allocator, "+ - * / dup drop swap over");
+        const words = try lex(allocator, "+ - * / dup drop swap over");
         try std.testing.expectEqual(@as(usize, 8), words.len);
         try std.testing.expectEqual(Builtin.@"+", words[0].builtin);
         try std.testing.expectEqual(Builtin.@"-", words[1].builtin);
@@ -838,7 +873,7 @@ test "lex identifiers" {
 
     // Complex identifiers
     {
-        const words = lex(allocator, "foo123 _bar baz_ under_score CamelCase");
+        const words = try lex(allocator, "foo123 _bar baz_ under_score CamelCase");
         try std.testing.expectEqual(@as(usize, 5), words.len);
         try std.testing.expectEqualStrings("foo123", words[0].identifier);
         try std.testing.expectEqualStrings("_bar", words[1].identifier);
@@ -849,7 +884,7 @@ test "lex identifiers" {
 
     // Funny identifiers
     {
-        const words = lex(allocator, "1+ 2/ works?");
+        const words = try lex(allocator, "1+ 2/ works?");
         try std.testing.expectEqual(@as(usize, 3), words.len);
         try std.testing.expectEqualStrings("1+", words[0].identifier);
         try std.testing.expectEqualStrings("2/", words[1].identifier);
@@ -863,7 +898,7 @@ test "lex quotes" {
     const allocator = arena.allocator();
 
     {
-        const words = lex(allocator, "'test");
+        const words = try lex(allocator, "'test");
         try std.testing.expectEqual(@as(usize, 1), words.len);
         try std.testing.expectEqualStrings("test", words[0].quoted);
     }
@@ -876,7 +911,7 @@ test "lex mixed input" {
 
     // Mixed types
     {
-        const words = lex(allocator, "42 3.14 \"hello\" + -17 \"world\" swap 'swap");
+        const words = try lex(allocator, "42 3.14 \"hello\" + -17 \"world\" swap 'swap");
         try std.testing.expectEqual(@as(usize, 8), words.len);
         try std.testing.expectEqual(@as(i64, 42), words[0].int);
         try std.testing.expectApproxEqAbs(@as(f64, 3.14), words[1].float, 0.001);
@@ -890,7 +925,7 @@ test "lex mixed input" {
 
     // Different whitespace
     {
-        const words = lex(allocator, "1\n2\t3  4\n\t  5");
+        const words = try lex(allocator, "1\n2\t3  4\n\t  5");
         try std.testing.expectEqual(@as(usize, 5), words.len);
         for (words, 1..) |word, i| {
             try std.testing.expectEqual(@as(i64, @intCast(i)), word.int);
@@ -899,7 +934,7 @@ test "lex mixed input" {
 
     // Adjacent strings and numbers
     {
-        const words = lex(allocator, "\"no\"\"space\"42\"between\"3.14");
+        const words = try lex(allocator, "\"no\"\"space\"42\"between\"3.14");
         try std.testing.expectEqual(@as(usize, 5), words.len);
         try std.testing.expectEqualStrings("no", words[0].string);
         try std.testing.expectEqualStrings("space", words[1].string);
@@ -910,13 +945,13 @@ test "lex mixed input" {
 
     // Empty input
     {
-        const words = lex(allocator, "");
+        const words = try lex(allocator, "");
         try std.testing.expectEqual(@as(usize, 0), words.len);
     }
 
     // Only whitespace
     {
-        const words = lex(allocator, "   \n\t  \n  ");
+        const words = try lex(allocator, "   \n\t  \n  ");
         try std.testing.expectEqual(@as(usize, 0), words.len);
     }
 }
