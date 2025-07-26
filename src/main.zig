@@ -1,6 +1,6 @@
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa.deinit();
+    defer assert(gpa.deinit() == .ok, "Memory leaked", .{});
     var gpa_allocator = gpa.allocator();
     var arena = std.heap.ArenaAllocator.init(gpa_allocator);
     const arena_allocator = arena.allocator();

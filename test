@@ -1,3 +1,5 @@
+: .ln \\n . ;
 : square dup * ;
 
-0x000f square .x \\n .
+0x000f square .x .ln
+
