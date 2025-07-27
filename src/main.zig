@@ -177,6 +177,7 @@ const Definition = struct {
     wp: u32 = 0,
 };
 
+// TODO: serialization of programs
 const Machine = struct {
     arena: Allocator,
     data_stack_len: u32 = 0,
@@ -205,6 +206,7 @@ const Machine = struct {
     }
 
     fn push(machine: *Machine, value: Value) void {
+        assert(machine.data_stack_len < std.math.maxInt(u32), "data stack overflow", .{});
         machine.data_stack_len += 1;
         machine.data_stack[machine.data_stack_len - 1] = value;
     }
@@ -234,12 +236,10 @@ const Machine = struct {
         return null;
     }
 
-    fn pushDefinition(machine: *Machine, definition: Definition) u32 {
-        assert(machine.dictionary_len >= std.math.maxInt(u32), "dictionary overflow", .{});
-        machine.dictionaries[machine.dictionary_len] = definition;
-        const index = machine.dictionary_len;
+    fn pushDefinition(machine: *Machine, definition: Definition) void {
+        assert(machine.dictionary_len < std.math.maxInt(u32), "dictionary overflow", .{});
+        machine.dictionary[machine.dictionary_len] = definition;
         machine.dictionary_len += 1;
-        return index;
     }
 };
 
@@ -513,8 +513,7 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
             machine.wp += 1;
             current_definition.wp = machine.wp;
             while (!(machine.program[machine.wp] == .builtin and machine.program[machine.wp].builtin == .@";")) : (machine.wp += 1) {}
-            machine.dictionary[machine.dictionary_len] = current_definition;
-            machine.dictionary_len += 1;
+            machine.pushDefinition(current_definition);
         },
 
         .@";" => {
