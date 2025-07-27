@@ -623,22 +623,39 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         } else if (input[index] == '"') {
             // Skip opening quote
             index += 1;
-            var string_buf = ArrayListUnmanaged(u8).empty;
 
+            // Get the string size to allocate
+            var string_size: u32 = 0;
+            const index_start = index;
+            while (index < input.len and input[index] != '"') : (index += 1) {
+                if (input[index] == '\\' and index + 1 < input.len)
+                    index += 1;
+                string_size += 1;
+            }
+            if (index >= input.len) {
+                try reportError(.syntax_error);
+                assert(false, "unterminated string literal", .{});
+            }
+
+            // Reset the index to actually construct the string
+            index = index_start;
+
+            var string = arena.alloc(u8, string_size) catch oom();
+            var string_index: u32 = 0;
             while (index < input.len and input[index] != '"') : (index += 1) {
                 if (input[index] == '\\' and index + 1 < input.len) {
                     index += 1;
                     if (parse_escape_sequence(input[index])) |escaped| {
-                        string_buf.append(arena, escaped) catch oom();
+                        string[string_index] = escaped;
                     } else {
                         // for invalid escape sequences add the character anyway
-                        string_buf.append(arena, input[index]) catch oom();
+                        string[string_index] = input[index];
                     }
                 } else {
-                    string_buf.append(arena, input[index]) catch oom();
+                    string[string_index] = input[index];
                 }
+                string_index += 1;
             }
-
             if (index < input.len) {
                 // Skip closing quote
                 index += 1;
@@ -648,7 +665,7 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
             }
 
             words.append(arena, .{
-                .string = string_buf.toOwnedSlice(arena) catch oom(),
+                .string = string,
             }) catch oom();
         } else if (input[index] == '\'') {
             // Skip the quote

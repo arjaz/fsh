@@ -1,5 +1,9 @@
-: .ln \\n . ;
+: .ln . \\n . ;
 : square dup * ;
 
-0x000f square .x .ln
+: hi "Hello " . .ln ;
+
+0x000f square .x \\n .
+
+"World" hi
 
