@@ -225,21 +225,11 @@ const Machine = struct {
         return machine.data_stack[machine.data_stack_len - 2];
     }
 
-    fn top3(machine: Machine) Value {
-        return machine.data_stack[machine.data_stack_len - 3];
-    }
-
     fn dictionaryLookup(machine: Machine, name: []const u8) ?Definition {
         for (machine.dictionary[0..machine.dictionary_len]) |def|
             if (mem.eql(u8, name, def.name))
                 return def;
         return null;
-    }
-
-    fn pushDefinition(machine: *Machine, definition: Definition) void {
-        assert(machine.dictionary_len < std.math.maxInt(u32), "dictionary overflow", .{});
-        machine.dictionary[machine.dictionary_len] = definition;
-        machine.dictionary_len += 1;
     }
 };
 
@@ -508,12 +498,17 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
         .@":" => {
             var current_definition: Definition = .empty;
             machine.wp += 1;
-            assert(machine.program[machine.wp] == .identifier, "Word name expected", .{});
+            if (machine.program[machine.wp] != .identifier)
+                try reportError(.syntax_error);
             current_definition.name = machine.program[machine.wp].identifier;
             machine.wp += 1;
             current_definition.wp = machine.wp;
-            while (!(machine.program[machine.wp] == .builtin and machine.program[machine.wp].builtin == .@";")) : (machine.wp += 1) {}
-            machine.pushDefinition(current_definition);
+            while (!(machine.program[machine.wp] == .builtin and
+                machine.program[machine.wp].builtin == .@";"))
+                machine.wp += 1;
+            assert(machine.dictionary_len < std.math.maxInt(u32), "dictionary overflow", .{});
+            machine.dictionary[machine.dictionary_len] = current_definition;
+            machine.dictionary_len += 1;
         },
 
         .@";" => {
@@ -571,6 +566,7 @@ fn interpret(arena: Allocator, machine: *Machine) !void {
             .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
             .identifier => |id| {
                 if (machine.dictionaryLookup(id)) |def| {
+                    assert(machine.call_stack_len < STACK_CAP, "call stack overflow", .{});
                     machine.call_stack[machine.call_stack_len] = machine.wp;
                     machine.call_stack_len += 1;
                     machine.wp = def.wp - 1;
@@ -696,23 +692,23 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
 }
 
 fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
-    if (!condition) std.debug.panic(format ++ "\n", args);
+    if (!condition) debug.panic(format ++ "\n", args);
 }
 
 fn oom() noreturn {
-    std.debug.panic("OOM\n", .{});
+    debug.panic("OOM\n", .{});
 }
 
 fn exit(comptime format: []const u8, args: anytype) noreturn {
     @branchHint(.cold);
-    std.debug.print(format ++ "\n", args);
+    debug.print(format ++ "\n", args);
     process.exit(1);
 }
 
 fn printStderr(comptime format: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    const bw = std.debug.lockStderrWriter(&buffer);
-    defer std.debug.unlockStderrWriter();
+    const bw = debug.lockStderrWriter(&buffer);
+    defer debug.unlockStderrWriter();
     nosuspend bw.print(format, args) catch return;
 }
 
@@ -956,6 +952,7 @@ test "lex mixed input" {
 }
 
 const std = @import("std");
+const debug = std.debug;
 const meta = std.meta;
 const process = std.process;
 const posix = std.posix;
