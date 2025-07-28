@@ -18,13 +18,13 @@ pub fn main() !void {
         error.OutOfMemory => oom(),
         else => exit("Something is wrong with your file", .{}),
     };
-    defer gpa_allocator.free(input);
     args_iterator.deinit();
 
     var lexer_arena = std.heap.ArenaAllocator.init(gpa_allocator);
     const lexer_arena_allocator = lexer_arena.allocator();
     defer lexer_arena.deinit();
     const words = try lex(lexer_arena_allocator, input);
+    gpa_allocator.free(input);
 
     var machine_arena = std.heap.ArenaAllocator.init(gpa_allocator);
     const machine_arena_allocator = machine_arena.allocator();
@@ -585,6 +585,13 @@ fn interpret(machine: *Machine) !void {
     }
 }
 
+fn is_whitespace(char: u8) bool {
+    return switch (char) {
+        ' ', '\n', '\r', '\t' => true,
+        else => false,
+    };
+}
+
 fn parse_escape_sequence(char: u8) ?u8 {
     return switch (char) {
         'n' => '\n',
@@ -597,36 +604,89 @@ fn parse_escape_sequence(char: u8) ?u8 {
     };
 }
 
+// TODO: remove all this < input.len checking
 fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
-    var words = ArrayListUnmanaged(Word).empty;
-    var index: usize = 0;
+    // to get the number of words for allocation
+    // we go through the input twice
+    // the first time to count the words
+    // the second time to lex them
 
+    var program_size: u32 = 0;
+    var index: u32 = 0;
+    while (index < input.len) {
+        while (index < input.len and is_whitespace(input[index]))
+            index += 1;
+        if (index >= input.len) break;
+        // character
+        if (input[index] == '\\') {
+            program_size += 1;
+            index += 1;
+            if (index < input.len and input[index] == '\\')
+                index += 1;
+            index += 1;
+        }
+        // string
+        else if (input[index] == '"') {
+            program_size += 1;
+            index += 1;
+            while (index < input.len and input[index] != '"') : (index += 1) {
+                if (input[index] == '\\')
+                    index += 1;
+            }
+            if (index >= input.len) {
+                try reportError(.syntax_error);
+            } else index += 1;
+        }
+        // quote
+        else if (input[index] == '\'') {
+            program_size += 1;
+            index += 1;
+            while (index < input.len and
+                !is_whitespace(input[index]))
+                index += 1;
+        }
+        // identifier
+        else {
+            program_size += 1;
+            while (index < input.len and
+                !is_whitespace(input[index]) and input[index] != '"')
+                index += 1;
+        }
+    }
+
+    var words = arena.alloc(Word, program_size) catch oom();
+    var word_index: u32 = 0;
+    index = 0;
     while (index < input.len) {
         // Skip whitespace
         while (index < input.len and
-            (input[index] == ' ' or input[index] == '\n' or input[index] == '\t'))
+            is_whitespace(input[index]))
             index += 1;
 
         if (index >= input.len) break;
 
+        // charactor
         if (input[index] == '\\') {
             // Skip starting backslash
             index += 1;
-            if (index < input.len and input[index] == '\'')
-                try reportError(.syntax_error);
             if (index < input.len and input[index] == '\\') {
                 index += 1;
                 if (parse_escape_sequence(input[index])) |escaped| {
-                    words.append(arena, .{ .char = escaped }) catch oom();
+                    words[word_index] = .{ .char = escaped };
+                    word_index += 1;
                 } else {
                     // for invalid escape sequences add the character anyway
-                    words.append(arena, .{ .char = input[index] }) catch oom();
+                    words[word_index] = .{ .char = input[index] };
+                    word_index += 1;
                 }
             } else {
-                words.append(arena, .{ .char = input[index] }) catch oom();
+                words[word_index] = .{ .char = input[index] };
+                word_index += 1;
             }
             index += 1;
-        } else if (input[index] == '"') {
+        }
+        // string
+        else if (input[index] == '"') {
             // Skip opening quote
             index += 1;
 
@@ -634,14 +694,12 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
             var string_size: u32 = 0;
             const index_start = index;
             while (index < input.len and input[index] != '"') : (index += 1) {
-                if (input[index] == '\\' and index + 1 < input.len)
+                if (input[index] == '\\')
                     index += 1;
                 string_size += 1;
             }
-            if (index >= input.len) {
+            if (index >= input.len)
                 try reportError(.syntax_error);
-                assert(false, "unterminated string literal", .{});
-            }
 
             // Reset the index to actually construct the string
             index = index_start;
@@ -662,56 +720,66 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
                 }
                 string_index += 1;
             }
+            // TODO: do we need to do that? Don't we skip it in the loop?
+            //       seems like no but check
             if (index < input.len) {
                 // Skip closing quote
                 index += 1;
-            } else {
-                try reportError(.syntax_error);
-                assert(false, "unterminated string literal", .{});
-            }
+            } else try reportError(.syntax_error);
 
-            words.append(arena, .{
-                .string = string,
-            }) catch oom();
-        } else if (input[index] == '\'') {
+            words[word_index] = .{ .string = string };
+            word_index += 1;
+        }
+        // quote
+        else if (input[index] == '\'') {
             // Skip the quote
             index += 1;
             const word_start = index;
-            while (index < input.len and input[index] != ' ' and input[index] != '\n' and
-                input[index] != '\t')
+            while (index < input.len and
+                !is_whitespace(input[index]))
                 index += 1;
             const word = input[word_start..index];
-            words.append(arena, .{ .quoted = word }) catch oom();
-        } else {
+            words[word_index] = .{ .quoted = word };
+            word_index += 1;
+        }
+        // identifier: word/number
+        else {
             // Not a string, find the end of the word
             const word_start = index;
             while (index < input.len and
-                input[index] != ' ' and input[index] != '\n' and
-                input[index] != '\t' and input[index] != '"')
+                !is_whitespace(input[index]) and input[index] != '"')
                 index += 1;
 
             const word = input[word_start..index];
 
             // Try to parse as int, float, builtin, or identifier
             if (std.fmt.parseInt(i64, word, 0) catch null) |num| {
-                words.append(arena, .{ .int = num }) catch oom();
+                words[word_index] = .{ .int = num };
+                word_index += 1;
             } else if (std.fmt.parseFloat(f64, word) catch null) |num| {
-                words.append(arena, .{ .float = num }) catch oom();
+                words[word_index] = .{ .float = num };
+                word_index += 1;
             } else parsed: {
+                // a builtin
                 inline for (meta.fields(Builtin)) |enumField| {
                     if (mem.eql(u8, word, enumField.name)) {
-                        words.append(arena, .{
+                        words[word_index] = .{
                             .builtin = @field(Builtin, enumField.name),
-                        }) catch oom();
+                        };
+                        word_index += 1;
                         break :parsed;
                     }
                 }
-                words.append(arena, .{ .identifier = word }) catch oom();
+                // an identifier
+                const word_owned = arena.alloc(u8, word.len) catch oom();
+                @memcpy(word_owned, word);
+                words[word_index] = .{ .identifier = word_owned };
+                word_index += 1;
             }
         }
     }
 
-    return words.toOwnedSlice(arena) catch oom();
+    return words;
 }
 
 fn assert(condition: bool, comptime format: []const u8, args: anytype) void {
