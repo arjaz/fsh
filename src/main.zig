@@ -1,10 +1,9 @@
 pub fn main() !void {
-    var gpa = heap.DebugAllocator(.{}).init;
+    var gpa = DebugAllocator(.{}).init;
     defer assert(gpa.deinit() == .ok, "Memory leaked", .{});
     var gpa_allocator = gpa.allocator();
 
     var args_iterator = process.argsWithAllocator(gpa_allocator) catch oom();
-    // The first one is the binary name
     _ = args_iterator.next();
     const filename = args_iterator.next() orelse exit("provide the input file", .{});
     const input = fs.cwd().readFileAllocOptions(
@@ -20,13 +19,13 @@ pub fn main() !void {
     };
     args_iterator.deinit();
 
-    var lexer_arena = heap.ArenaAllocator.init(gpa_allocator);
+    var lexer_arena = ArenaAllocator.init(gpa_allocator);
     const lexer_arena_allocator = lexer_arena.allocator();
     defer lexer_arena.deinit();
     const words = try lex(lexer_arena_allocator, input);
     gpa_allocator.free(input);
 
-    var machine_arena = heap.ArenaAllocator.init(gpa_allocator);
+    var machine_arena = ArenaAllocator.init(gpa_allocator);
     const machine_arena_allocator = machine_arena.allocator();
     defer machine_arena.deinit();
     var machine = Machine.init(machine_arena_allocator);
@@ -106,7 +105,7 @@ const Value = struct {
 };
 
 // Exactly the same name is also used for parsing
-const Builtin = enum {
+const Builtin = enum(u8) {
     // booleans
     @"=",
     @"!=",
@@ -176,13 +175,11 @@ const Word = union(enum) {
 };
 
 const Definition = struct {
-    const empty = Definition{};
-
     name: []const u8 = &.{},
     wp: u32 = 0,
+    const empty = Definition{};
 };
 
-// TODO: serialization of programs
 const Machine = struct {
     arena: Allocator,
     data_stack_len: u32 = 0,
@@ -465,7 +462,6 @@ fn interpertBuiltin(machine: *Machine, builtin: Builtin) !void {
         .@"." => {
             const top = machine.pop();
             top.print();
-            // printStderr(" ", .{});
         },
 
         .@".b" => {
@@ -655,16 +651,13 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
     var word_index: u32 = 0;
     index = 0;
     while (index < input.len) {
-        // Skip whitespace
-        while (index < input.len and
-            is_whitespace(input[index]))
+        while (index < input.len and is_whitespace(input[index]))
             index += 1;
 
         if (index >= input.len) break;
 
         // charactor
         if (input[index] == '\\') {
-            // Skip starting backslash
             index += 1;
             if (index < input.len and input[index] == '\\') {
                 index += 1;
@@ -684,7 +677,6 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         }
         // string
         else if (input[index] == '"') {
-            // Skip opening quote
             index += 1;
 
             // Get the string size to allocate
@@ -717,8 +709,6 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
                 }
                 string_index += 1;
             }
-            // TODO: do we need to do that? Don't we skip it in the loop?
-            //       seems like no but check
             if (index < input.len) {
                 // Skip closing quote
                 index += 1;
@@ -729,7 +719,6 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         }
         // quote
         else if (input[index] == '\'') {
-            // Skip the quote
             index += 1;
             const word_start = index;
             while (index < input.len and
@@ -1053,6 +1042,6 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const ArrayList = std.ArrayList;
-const GeneralPurposeAllocator = heap.GeneralPurposeAllocator;
+const DebugAllocator = heap.DebugAllocator;
 const ArenaAllocator = heap.ArenaAllocator;
 const StaticStringMap = std.StaticStringMap;
