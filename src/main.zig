@@ -2,9 +2,6 @@ pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}).init;
     defer assert(gpa.deinit() == .ok, "Memory leaked", .{});
     var gpa_allocator = gpa.allocator();
-    var arena = std.heap.ArenaAllocator.init(gpa_allocator);
-    const arena_allocator = arena.allocator();
-    defer arena.deinit();
 
     var args_iterator = process.argsWithAllocator(gpa_allocator) catch oom();
     // The first one is the binary name
@@ -24,10 +21,18 @@ pub fn main() !void {
     defer gpa_allocator.free(input);
     args_iterator.deinit();
 
-    const words = try lex(arena_allocator, input);
-    var machine = Machine.init(arena_allocator);
+    var lexer_arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    const lexer_arena_allocator = lexer_arena.allocator();
+    defer lexer_arena.deinit();
+    const words = try lex(lexer_arena_allocator, input);
+
+    var machine_arena = std.heap.ArenaAllocator.init(gpa_allocator);
+    const machine_arena_allocator = machine_arena.allocator();
+    defer machine_arena.deinit();
+    var machine = Machine.init(machine_arena_allocator);
     machine.program = words;
-    try interpret(arena_allocator, &machine);
+
+    try interpret(&machine);
 }
 
 const STACK_CAP = 2 << 16;
@@ -243,7 +248,7 @@ fn reportError(e: ErrorType) !void {
     }
 }
 
-fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void {
+fn interpertBuiltin(machine: *Machine, builtin: Builtin) !void {
     switch (builtin) {
         .@"=" => {
             const arg2 = machine.pop();
@@ -517,14 +522,15 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
         },
 
         .ls => {
-            var array = ArrayList(Value).init(arena);
+            // TODO: Here we should free once we pop or something
+            var array = ArrayListUnmanaged(Value).empty;
             var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch unreachable;
             defer dir.close();
             var iterator = dir.iterateAssumeFirstIteration();
             while (iterator.next() catch null) |entry| {
-                const owned = arena.alloc(u8, entry.name.len) catch oom();
+                const owned = machine.arena.alloc(u8, entry.name.len) catch oom();
                 @memcpy(owned, entry.name);
-                array.append(.fromString(owned)) catch oom();
+                array.append(machine.arena, .fromString(owned)) catch oom();
             }
             machine.data_stack_len += 1;
             machine.data_stack[machine.data_stack_len - 1] = .fromArray(array.items);
@@ -538,7 +544,7 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
                     const pid = posix.fork() catch exit("Fork failed", .{});
                     if (pid == 0) {
                         // child process
-                        process.execv(arena, &.{top.payload.identifier}) catch {};
+                        process.execv(machine.arena, &.{top.payload.identifier}) catch exit("Execv failed", .{});
                     } else if (pid > 0) {
                         // parent process
                         // TODO: do something with the return code?
@@ -555,7 +561,7 @@ fn interpertBuiltin(arena: Allocator, machine: *Machine, builtin: Builtin) !void
 }
 
 // TODO: memory management, some other time
-fn interpret(arena: Allocator, machine: *Machine) !void {
+fn interpret(machine: *Machine) !void {
     while (true) {
         switch (machine.program[machine.wp]) {
             .int => |num| machine.push(.fromInt(num)),
@@ -563,7 +569,7 @@ fn interpret(arena: Allocator, machine: *Machine) !void {
             .char => |char| machine.push(.fromChar(char)),
             .string => |str| machine.push(.fromString(str)),
             .quoted => |quoted| machine.push(.fromIdentifier(quoted)),
-            .builtin => |builtin| try interpertBuiltin(arena, machine, builtin),
+            .builtin => |builtin| try interpertBuiltin(machine, builtin),
             .identifier => |id| {
                 if (machine.dictionaryLookup(id)) |def| {
                     assert(machine.call_stack_len < STACK_CAP, "call stack overflow", .{});
