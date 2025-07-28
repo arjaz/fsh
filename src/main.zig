@@ -562,7 +562,7 @@ fn interpertBuiltin(machine: *Machine, builtin: Builtin) !void {
 
 // TODO: memory management, some other time
 fn interpret(machine: *Machine) !void {
-    while (true) {
+    while (machine.wp < machine.program.len) : (machine.wp += 1) {
         switch (machine.program[machine.wp]) {
             .int => |num| machine.push(.fromInt(num)),
             .float => |num| machine.push(.fromFloat(num)),
@@ -579,9 +579,6 @@ fn interpret(machine: *Machine) !void {
                 } else try reportError(.undefined);
             },
         }
-
-        machine.wp += 1;
-        if (machine.wp >= machine.program.len) break;
     }
 }
 
