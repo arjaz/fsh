@@ -597,7 +597,6 @@ fn parse_escape_sequence(char: u8) u8 {
     };
 }
 
-// TODO: remove all this < input.len checking
 fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
     // to get the number of words for allocation
     // we go through the input twice
@@ -606,15 +605,14 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
 
     var program_size: u32 = 0;
     var index: u32 = 0;
-    while (index < input.len) {
-        while (index < input.len and is_whitespace(input[index]))
+    while (input[index] != 0) {
+        while (is_whitespace(input[index]))
             index += 1;
-        if (index >= input.len) break;
         // character
         if (input[index] == '\\') {
             program_size += 1;
             index += 1;
-            if (index < input.len and input[index] == '\\')
+            if (input[index] == '\\')
                 index += 1;
             index += 1;
         }
@@ -622,11 +620,11 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         else if (input[index] == '"') {
             program_size += 1;
             index += 1;
-            while (index < input.len and input[index] != '"') : (index += 1) {
+            while (input[index] != 0 and input[index] != '"') : (index += 1) {
                 if (input[index] == '\\')
                     index += 1;
             }
-            if (index >= input.len) {
+            if (input[index] == 0) {
                 try reportError(.syntax_error);
             } else index += 1;
         }
@@ -634,15 +632,15 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         else if (input[index] == '\'') {
             program_size += 1;
             index += 1;
-            while (index < input.len and
-                !is_whitespace(input[index]))
+            while (input[index] != 0 and !is_whitespace(input[index]))
                 index += 1;
         }
         // identifier
-        else {
+        else if (input[index] != 0) {
             program_size += 1;
-            while (index < input.len and
-                !is_whitespace(input[index]) and input[index] != '"')
+            while (input[index] != 0 and
+                !is_whitespace(input[index]) and
+                input[index] != '"')
                 index += 1;
         }
     }
@@ -650,16 +648,13 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
     var words = arena.alloc(Word, program_size) catch oom();
     var word_index: u32 = 0;
     index = 0;
-    while (index < input.len) {
-        while (index < input.len and is_whitespace(input[index]))
+    while (input[index] != 0) {
+        while (is_whitespace(input[index]))
             index += 1;
-
-        if (index >= input.len) break;
-
-        // charactor
+        // character
         if (input[index] == '\\') {
             index += 1;
-            if (index < input.len and input[index] == '\\') {
+            if (input[index] == '\\') {
                 index += 1;
                 const escaped = parse_escape_sequence(input[index]);
                 words[word_index] = .{ .char = escaped };
@@ -672,25 +667,22 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         // string
         else if (input[index] == '"') {
             index += 1;
-
             // Get the string size to allocate
             var string_size: u32 = 0;
             const index_start = index;
-            while (index < input.len and input[index] != '"') : (index += 1) {
+            while (input[index] != 0 and input[index] != '"') : (index += 1) {
                 if (input[index] == '\\')
                     index += 1;
                 string_size += 1;
             }
-            if (index >= input.len)
+            if (input[index] == 0)
                 try reportError(.syntax_error);
-
             // Reset the index to actually construct the string
             index = index_start;
-
             var string = arena.alloc(u8, string_size) catch oom();
             var string_index: u32 = 0;
-            while (index < input.len and input[index] != '"') : (index += 1) {
-                if (input[index] == '\\' and index + 1 < input.len) {
+            while (input[index] != 0 and input[index] != '"') : (index += 1) {
+                if (input[index] == '\\') {
                     index += 1;
                     string[string_index] = parse_escape_sequence(input[index]);
                 } else {
@@ -698,11 +690,11 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
                 }
                 string_index += 1;
             }
-            if (index < input.len) {
-                // Skip closing quote
-                index += 1;
-            } else try reportError(.syntax_error);
-
+            // Skip closing quote
+            if (input[index] != 0)
+                index += 1
+            else
+                try reportError(.syntax_error);
             words[word_index] = .{ .string = string };
             word_index += 1;
         }
@@ -710,7 +702,7 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
         else if (input[index] == '\'') {
             index += 1;
             const word_start = index;
-            while (index < input.len and
+            while (input[index] != 0 and
                 !is_whitespace(input[index]))
                 index += 1;
             const word = input[word_start..index];
@@ -718,15 +710,14 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
             word_index += 1;
         }
         // identifier: word/number
-        else {
+        else if (input[index] != 0) {
             // Not a string, find the end of the word
             const word_start = index;
-            while (index < input.len and
-                !is_whitespace(input[index]) and input[index] != '"')
+            while (input[index] != 0 and
+                !is_whitespace(input[index]) and
+                input[index] != '"')
                 index += 1;
-
             const word = input[word_start..index];
-
             // Try to parse as int, float, builtin, or identifier
             if (fmt.parseInt(i64, word, 0) catch null) |num| {
                 words[word_index] = .{ .int = num };
