@@ -585,7 +585,7 @@ fn is_whitespace(char: u8) bool {
     };
 }
 
-fn parse_escape_sequence(char: u8) ?u8 {
+fn parse_escape_sequence(char: u8) u8 {
     return switch (char) {
         'n' => '\n',
         't' => '\t',
@@ -593,7 +593,7 @@ fn parse_escape_sequence(char: u8) ?u8 {
         '\\' => '\\',
         '"' => '"',
         '0' => 0,
-        else => null,
+        else => char,
     };
 }
 
@@ -661,18 +661,12 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
             index += 1;
             if (index < input.len and input[index] == '\\') {
                 index += 1;
-                if (parse_escape_sequence(input[index])) |escaped| {
-                    words[word_index] = .{ .char = escaped };
-                    word_index += 1;
-                } else {
-                    // for invalid escape sequences add the character anyway
-                    words[word_index] = .{ .char = input[index] };
-                    word_index += 1;
-                }
+                const escaped = parse_escape_sequence(input[index]);
+                words[word_index] = .{ .char = escaped };
             } else {
                 words[word_index] = .{ .char = input[index] };
-                word_index += 1;
             }
+            word_index += 1;
             index += 1;
         }
         // string
@@ -698,12 +692,7 @@ fn lex(arena: Allocator, input: [:0]const u8) ![]const Word {
             while (index < input.len and input[index] != '"') : (index += 1) {
                 if (input[index] == '\\' and index + 1 < input.len) {
                     index += 1;
-                    if (parse_escape_sequence(input[index])) |escaped| {
-                        string[string_index] = escaped;
-                    } else {
-                        // for invalid escape sequences add the character anyway
-                        string[string_index] = input[index];
-                    }
+                    string[string_index] = parse_escape_sequence(input[index]);
                 } else {
                     string[string_index] = input[index];
                 }
